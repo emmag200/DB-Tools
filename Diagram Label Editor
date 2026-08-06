@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Diagram label editor — Dam Buster calculators</title>
+<style>
+    /* Internal dev tool — not user-facing UI. */
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f4f5f7; color: #1a1a1a; }
+    header { padding: 12px 18px; background: #111214; color: #fff; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    header h1 { font-size: 15px; margin: 0; font-weight: 700; }
+    header select { font-size: 14px; padding: 4px 8px; max-width: 320px; }
+    header .hint { font-size: 12px; color: #9CA3AF; }
+    header button { font-size: 12px; padding: 4px 10px; }
+    main { display: flex; gap: 14px; padding: 14px 18px; align-items: flex-start; }
+    #stageWrap { position: relative; flex: 1 1 auto; background: #fff; border: 1px solid #d5d8dd; }
+    #stage { position: relative; display: inline-block; line-height: 0; }
+    #stage img { display: block; max-width: 100%; user-select: none; -webkit-user-drag: none; }
+    .lbl {
+        position: absolute; white-space: nowrap; cursor: grab; line-height: 1;
+        font-family: Arial, Helvetica, sans-serif; font-weight: bold;
+        transform: translateY(calc(-100% + 0.21em)); /* anchor = left baseline, like jsPDF */
+    }
+    .lbl.selected { outline: 1.5px dashed magenta; outline-offset: 1px; }
+    .lbl.dragging { cursor: grabbing; }
+    #crosshair { position: absolute; top: 4px; right: 6px; background: rgba(17,18,20,0.75); color: #fff;
+        font: 11px/1.6 Consolas, monospace; padding: 2px 8px; pointer-events: none; }
+    aside { flex: 0 0 480px; }
+    aside h2 { font-size: 13px; margin: 0 0 6px; }
+    #inspector { background: #fff; border: 1px solid #d5d8dd; padding: 10px 12px; margin-bottom: 12px; min-height: 40px; font-size: 12px; }
+    #inspector .frow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    #inspector label { flex: 0 0 92px; font-weight: 600; }
+    #inspector input[type=text] { flex: 1; font: 12px Consolas, monospace; padding: 3px 6px; }
+    #inspector input[type=number] { width: 64px; font: 12px Consolas, monospace; padding: 3px 6px; }
+    #inspector input[type=color] { width: 42px; height: 26px; padding: 0 2px; }
+    #inspector .coords { font: 12px Consolas, monospace; color: #4B5563; }
+    .swatch { width: 22px; height: 22px; border: 1px solid #999; cursor: pointer; padding: 0; }
+    .swatch.blue { background: rgb(28,80,160); }
+    .swatch.red  { background: rgb(192,57,43); }
+    textarea#out { width: 100%; height: 330px; font: 11.5px/1.5 Consolas, monospace; border: 1px solid #d5d8dd; padding: 10px; box-sizing: border-box; white-space: pre; }
+    button { font-size: 13px; padding: 6px 14px; cursor: pointer; }
+    .bar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+    .bar select { font-size: 12px; padding: 4px 6px; }
+    #copied { font-size: 12px; color: #15803D; visibility: hidden; }
+    #newPanel { display: none; background: #fff; border: 1px solid #d5d8dd; padding: 10px 12px; margin: 0 18px; }
+    #newPanel .frow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    #newPanel label { flex: 0 0 110px; font-size: 12px; font-weight: 600; }
+    #newPanel input[type=text] { flex: 1; font: 12px Consolas, monospace; padding: 4px 6px; }
+    .muted { color: #6B7280; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+    <h1>Diagram label editor</h1>
+    <select id="preset"></select>
+    <button id="newDiagram">+ New diagram</button>
+    <button id="deleteDiagram">Delete diagram</button>
+    <span class="hint">Drag a label, or select it and nudge with arrow keys (Shift = bigger steps). Positions are % of the image, exactly as the PDF code uses them. Custom diagrams are saved in this browser.</span>
+</header>
+
+<div id="newPanel">
+    <div class="frow"><label>Diagram name</label><input type="text" id="newName" placeholder="e.g. SSO (DB, 2 gutters) — sso.js"></div>
+    <div class="frow"><label>Image URL</label><input type="text" id="newUrl" placeholder="https://dambusterdesign.com.au/DBapps/sso/dbsso2.jpg"></div>
+    <div class="frow"><label>…or local file</label><input type="file" id="newFile" accept="image/*"><span class="muted">for artwork not uploaded yet</span></div>
+    <div class="frow"><button id="createDiagram">Create</button><button id="cancelDiagram">Cancel</button></div>
+</div>
+
+<main>
+    <div id="stageWrap">
+        <div id="stage">
+            <img id="diagram" alt="diagram" draggable="false">
+            <div id="crosshair">x: —, y: —</div>
+        </div>
+    </div>
+    <aside>
+        <div class="bar">
+            <button id="addLabel">+ Add label</button>
+            <button id="dupLabel">Duplicate</button>
+            <button id="delLabel">Delete label</button>
+        </div>
+        <h2>Selected label</h2>
+        <div id="inspector">
+            <div id="noSel">Nothing selected.</div>
+            <div id="selForm" style="display:none;">
+                <div class="frow"><label>Text / name</label><input type="text" id="fName"></div>
+                <div class="frow"><label>Code expr</label><input type="text" id="fExpr" placeholder="optional — blank quotes the text"></div>
+                <div class="frow">
+                    <label>Font size</label><input type="number" id="fFs" step="0.5" min="4" max="30">
+                    <label style="flex:0 0 auto;">Colour</label>
+                    <input type="color" id="fColor">
+                    <button class="swatch blue" id="swBlue" title="House blue (inputs)"></button>
+                    <button class="swatch red" id="swRed" title="House red (outputs)"></button>
+                </div>
+                <div class="frow"><label>Position</label><span class="coords" id="fCoords"></span></div>
+            </div>
+        </div>
+        <h2>Generated code</h2>
+        <div class="bar">
+            <select id="outFormat">
+                <option value="calls">labelBlue / labelRed calls (CSO, ESO, TSO, R, OR, SU)</option>
+                <option value="array">array rows ['Name', x, y] (SSO WIZ_PDF_LABELS)</option>
+            </select>
+            <button id="copy">Copy code</button>
+            <span id="copied">Copied.</span>
+        </div>
+        <textarea id="out" readonly spellcheck="false"></textarea>
+        <div class="bar" style="margin-top:8px;">
+            <button id="exportJson">Export preset JSON</button>
+            <button id="importJson">Import JSON from box above</button>
+            <span class="muted">Export writes JSON to the box; Import reads it back as a new custom diagram.</span>
+        </div>
+    </aside>
+</main>
+<script>
+'use strict';
+
+const BLUE = [28, 80, 160];
+const RED  = [192, 57, 43];
+
+// Each built-in preset mirrors one calculator's PDF page-2 label block.
+// expr = the exact first argument in the calculator JS, sample = preview text.
+// fn is labelBlue/labelRed; tail = trailing args after fs in the generated call.
+// note = optional parapet-note anchor (generates the px()/py() line).
+const PRESETS = {
+
+    // ══════════════════════════════════════════════════════════════════
+    // New reference/results diagrams (diagrams/ folder).
+    // Image paths are repo-relative from tools/ with spaces %20-encoded so
+    // the tool loads them from the local repo — swap for server URLs once
+    // uploaded. x,y are % of the image; FIRST-PASS estimates to nudge in
+    // the editor. SSO blocks are the production values from WIZ_PDF_LABELS
+    // (sso.js); CSO/TSO/ESO blocks come from the calculator label blocks;
+    // HCO/OR/Rainhead/Sump/XSO are re-estimated for the new artwork.
+    // ══════════════════════════════════════════════════════════════════
+
+    // ---------------------------- HCO (02.x) ----------------------------
+    // hco.js now uses the same %-based system as the others: its HCO_PDF_LABELS
+    // table holds [key, xPct, yPct, fs?] rows, converted to page-mm by px()/py().
+    // These presets output the 'array' format, so the ['key', x, y] rows drop
+    // straight into HCO_PDF_LABELS[mode][gutters] in hco.js.
+    'HCO results (DB, 1 gutter) — 02.2': {
+        image: 'https://dambusterdesign.com.au/DBapps/hco/DB-HCO-Results-1G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', key: 'L1',   sample: 'L1: 12000 mm',       x: 30.0, y: 33.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q1',   sample: 'Q1: 12.5 L/s',       x: 24.0, y: 52.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Wbg',  sample: 'Wbg: 450 mm',        x: 88.0, y: 70.0, fs: 8 },
+            { fn: 'labelBlue', key: 'PDP',  sample: 'Primary DP: 90 mm',  x: 30.0, y: 94.0, fs: 8 },
+            { fn: 'labelBlue', key: 'ODP',  sample: 'Overflow DP: 90 mm', x: 47.0, y: 98.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1U',  sample: 'D1U: 82 mm',         x: 2.0,  y: 52.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1D',  sample: 'D1D: 110 mm',        x: 27.0, y: 62.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Ds',   sample: 'Ds: 240 mm',         x: 28.0, y: 74.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Loc',  sample: 'Loc: 40 mm',         x: 41.0, y: 51.0, fs: 7 },
+            { fn: 'labelRed',  key: 'Weir', sample: 'Weir Height: 60 mm', x: 58.0, y: 58.0, fs: 8 }
+        ]
+    },
+
+    'HCO results (DB, 2 gutters) — 02.3': {
+        image: 'https://dambusterdesign.com.au/DBapps/hco/DB-HCO-Results-2G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', key: 'L1',   sample: 'L1: 12000 mm',       x: 33.0, y: 40.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q1',   sample: 'Q1: 12.5 L/s',       x: 24.0, y: 55.0, fs: 8 },
+            { fn: 'labelBlue', key: 'L2',   sample: 'L2: 9000 mm',        x: 68.0, y: 62.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q2',   sample: 'Q2: 8.4 L/s',        x: 77.0, y: 82.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Wbg',  sample: 'Wbg: 450 mm',        x: 90.0, y: 88.0, fs: 8 },
+            { fn: 'labelBlue', key: 'PDP',  sample: 'Primary DP: 90 mm',  x: 33.0, y: 92.0, fs: 8 },
+            { fn: 'labelBlue', key: 'ODP',  sample: 'Overflow DP: 90 mm', x: 48.0, y: 96.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1U',  sample: 'D1U: 82 mm',         x: 3.0,  y: 48.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1D',  sample: 'D1D: 110 mm',        x: 27.0, y: 58.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D2D',  sample: 'D2D: 105 mm',        x: 62.0, y: 62.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D2U',  sample: 'D2U: 76 mm',         x: 90.0, y: 78.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Ds',   sample: 'Ds: 240 mm',         x: 28.0, y: 72.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Loc',  sample: 'Loc: 40 mm',         x: 44.0, y: 50.0, fs: 7 },
+            { fn: 'labelRed',  key: 'Weir', sample: 'Weir Height: 60 mm', x: 60.0, y: 58.0, fs: 8 }
+        ]
+    },
+
+    'HCO results (Custom, 1 gutter) — 02.5': {
+        image: 'https://dambusterdesign.com.au/DBapps/hco/Custom-HCO-Results-1G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', key: 'L1',  sample: 'L1: 12000 mm',       x: 40.0, y: 40.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q1',  sample: 'Q1: 12.5 L/s',       x: 26.0, y: 53.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Wbg', sample: 'Wbg: 450 mm',        x: 60.0, y: 55.0, fs: 8 },
+            { fn: 'labelBlue', key: 'PDP', sample: 'Primary DP: 90 mm',  x: 44.0, y: 93.0, fs: 8 },
+            { fn: 'labelBlue', key: 'ODP', sample: 'Overflow DP: 90 mm', x: 55.0, y: 90.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1U', sample: 'D1U: 82 mm',         x: 3.0,  y: 50.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1D', sample: 'D1D: 110 mm',        x: 30.0, y: 62.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Ds',  sample: 'Ds: 240 mm',         x: 31.0, y: 75.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Loc', sample: 'Loc: 40 mm',         x: 46.0, y: 58.0, fs: 7 }
+        ]
+    },
+
+    'HCO results (Custom, 2 gutters) — 02.6': {
+        image: 'https://dambusterdesign.com.au/DBapps/hco/Custom-HCO-Results-2G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', key: 'L1',  sample: 'L1: 12000 mm',       x: 33.0, y: 40.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q1',  sample: 'Q1: 12.5 L/s',       x: 24.0, y: 55.0, fs: 8 },
+            { fn: 'labelBlue', key: 'L2',  sample: 'L2: 9000 mm',        x: 68.0, y: 62.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Q2',  sample: 'Q2: 8.4 L/s',        x: 77.0, y: 82.0, fs: 8 },
+            { fn: 'labelBlue', key: 'Wbg', sample: 'Wbg: 450 mm',        x: 90.0, y: 88.0, fs: 8 },
+            { fn: 'labelBlue', key: 'PDP', sample: 'Primary DP: 90 mm',  x: 33.0, y: 92.0, fs: 8 },
+            { fn: 'labelBlue', key: 'ODP', sample: 'Overflow DP: 90 mm', x: 48.0, y: 96.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1U', sample: 'D1U: 82 mm',         x: 3.0,  y: 48.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D1D', sample: 'D1D: 110 mm',        x: 27.0, y: 58.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D2D', sample: 'D2D: 105 mm',        x: 62.0, y: 62.0, fs: 8 },
+            { fn: 'labelRed',  key: 'D2U', sample: 'D2U: 76 mm',         x: 90.0, y: 78.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Ds',  sample: 'Ds: 240 mm',         x: 28.0, y: 72.0, fs: 8 },
+            { fn: 'labelRed',  key: 'Loc', sample: 'Loc: 40 mm',         x: 44.0, y: 50.0, fs: 7 }
+        ]
+    },
+
+    // ---------------------------- SSO (03.x) ----------------------------
+    // Use the 'array' output format (['Name', x, y]) for WIZ_PDF_LABELS.
+    'SSO results (DB, 1 gutter) — 03.3': {
+        image: '../diagrams/03.3_DB_SSO_Results_1G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', expr: '', key: 'Wbg', sample: 'Wbg: 450 mm', x: 5.5,  y: 30.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Du',  sample: 'Du: 82 mm',   x: 1.0,  y: 46.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q',   sample: 'Q: 12.5 L/s', x: 24.5, y: 46.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L',   sample: 'L: 12000 mm', x: 36.0, y: 28.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Dd',  sample: 'Dd: 110 mm',  x: 26.0, y: 68.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds',  sample: 'Ds: 90 mm',   x: 28.5, y: 77.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls',  sample: 'Ls: 400 mm',  x: 37.5, y: 92.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'DP',  sample: 'DP: 90 mm',   x: 46.5, y: 97.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Woc', sample: 'Woc: 300 mm', x: 79.5, y: 12.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A',   sample: 'A: 250 mm',   x: 70.5, y: 17.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A2',  sample: 'A: 250 mm',   x: 87.5, y: 17.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Doc', sample: 'Doc: 110 mm', x: 57.0, y: 27.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'B',   sample: 'B: 150 mm',   x: 59.5, y: 32.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds2', sample: 'Ds: 90 mm',   x: 66.0, y: 41.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls2', sample: 'Ls: 400 mm',  x: 78.5, y: 50.5, fs: 8 }
+        ]
+    },
+
+    'SSO results (DB, 2 gutters) — 03.4': {
+        image: '../diagrams/03.4_DB_SSO_Resuts_2G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelRed',  expr: '', key: 'D1U', sample: 'D1U: 82 mm',  x: 0.8,  y: 36.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q1',  sample: 'Q1: 12.5 L/s', x: 21.5, y: 42.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L1',  sample: 'L1: 12000 mm', x: 32.5, y: 24.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Woc', sample: 'Woc: 300 mm', x: 79.5, y: 13.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A',   sample: 'A: 250 mm',   x: 70.5, y: 18.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A2',  sample: 'A: 250 mm',   x: 88.0, y: 18.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Doc', sample: 'Doc: 110 mm', x: 61.0, y: 29.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'B',   sample: 'B: 150 mm',   x: 63.5, y: 34.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds2', sample: 'Ds: 90 mm',   x: 71.5, y: 41.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls2', sample: 'Ls: 400 mm',  x: 78.5, y: 51.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L2',  sample: 'L2: 9000 mm', x: 70.5, y: 49.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D2D', sample: 'D2D: 105 mm', x: 50.0, y: 61.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D1D', sample: 'D1D: 110 mm', x: 21.0, y: 64.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds',  sample: 'Ds: 90 mm',   x: 23.0, y: 74.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls',  sample: 'Ls: 400 mm',  x: 32.5, y: 89.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'DP',  sample: 'DP: 90 mm',   x: 43.5, y: 95.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q2',  sample: 'Q2: 8.4 L/s', x: 67.5, y: 80.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D2U', sample: 'D2U: 76 mm',  x: 90.5, y: 75.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Wbg', sample: 'Wbg: 450 mm', x: 86.5, y: 97.0, fs: 8 }
+        ]
+    },
+
+    'SSO results (Custom, 1 gutter) — 03.7': {
+        image: '../diagrams/03.7_Custom_SSO_Results_1G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelBlue', expr: '', key: 'Wbg', sample: 'Wbg: 450 mm', x: 6.0,  y: 29.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Du',  sample: 'Du: 82 mm',   x: 1.5,  y: 44.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q',   sample: 'Q: 12.5 L/s', x: 23.5, y: 43.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L',   sample: 'L: 12000 mm', x: 37.0, y: 27.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Dd',  sample: 'Dd: 110 mm',  x: 26.0, y: 69.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds',  sample: 'Ds: 90 mm',   x: 28.5, y: 77.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls',  sample: 'Ls: 400 mm',  x: 37.5, y: 92.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'DP',  sample: 'DP: 90 mm',   x: 48.5, y: 97.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Woc', sample: 'Woc: 300 mm', x: 79.0, y: 11.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A',   sample: 'A: 250 mm',   x: 69.5, y: 15.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A2',  sample: 'A: 250 mm',   x: 87.5, y: 15.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Doc', sample: 'Doc: 110 mm', x: 56.0, y: 27.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'B',   sample: 'B: 150 mm',   x: 58.5, y: 31.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds2', sample: 'Ds: 90 mm',   x: 64.5, y: 38.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls2', sample: 'Ls: 400 mm',  x: 78.0, y: 48.5, fs: 8 }
+        ]
+    },
+
+    'SSO results (Custom, 2 gutters) — 03.8': {
+        image: '../diagrams/03.8_Custom_%20SSO_Results_2G.jpg',
+        tail: '',
+        format: 'array',
+        labels: [
+            { fn: 'labelRed',  expr: '', key: 'D1U', sample: 'D1U: 82 mm',  x: 0.8,  y: 31.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q1',  sample: 'Q1: 12.5 L/s', x: 21.5, y: 40.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L1',  sample: 'L1: 12000 mm', x: 31.5, y: 21.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Woc', sample: 'Woc: 300 mm', x: 80.0, y: 11.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A',   sample: 'A: 250 mm',   x: 71.0, y: 15.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'A2',  sample: 'A: 250 mm',   x: 88.5, y: 15.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Doc', sample: 'Doc: 110 mm', x: 59.0, y: 27.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'B',   sample: 'B: 150 mm',   x: 61.5, y: 32.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds2', sample: 'Ds: 90 mm',   x: 66.5, y: 39.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls2', sample: 'Ls: 400 mm',  x: 79.0, y: 49.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'L2',  sample: 'L2: 9000 mm', x: 71.0, y: 47.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D2D', sample: 'D2D: 105 mm', x: 50.5, y: 59.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D1D', sample: 'D1D: 110 mm', x: 21.5, y: 63.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ds',  sample: 'Ds: 90 mm',   x: 23.5, y: 73.0, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'Ls',  sample: 'Ls: 400 mm',  x: 33.0, y: 88.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'DP',  sample: 'DP: 90 mm',   x: 44.0, y: 94.5, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Q2',  sample: 'Q2: 8.4 L/s', x: 67.5, y: 79.5, fs: 8 },
+            { fn: 'labelRed',  expr: '', key: 'D2U', sample: 'D2U: 76 mm',  x: 90.5, y: 75.0, fs: 8 },
+            { fn: 'labelBlue', expr: '', key: 'Wbg', sample: 'Wbg: 450 mm', x: 85.5, y: 96.5, fs: 8 }
+        ]
+    },
+
+    // -------------------- OR / Rainhead / Sump (04/05/06) --------------------
+    'OR results (DB mode) — 04.3': {
+        image: '../diagrams/04.3_OR_DB_Results.jpg',
+        tail: '',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",   sample: 'L: 12000 mm',     x: 40.0, y: 30.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + r.flow + ' L/s'",    sample: 'Q: 12.5 L/s',     x: 30.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",    sample: 'Wbg: 450 mm',     x: 82.0, y: 20.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",   sample: 'Slope: 1 in 100', x: 68.0, y: 40.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",        sample: 'DP: 90 mm',       x: 13.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",      sample: 'Du: 82 mm',       x: 85.0, y: 27.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",      sample: 'Dd: 110 mm',      x: 45.0, y: 62.0, fs: 12 },
+            { fn: 'labelRed',  expr: "r.product_label",            sample: 'DB-OR-450',       x: 33.0, y: 82.0, fs: 15 }
+        ]
+    },
+
+    'OR results (Custom mode) — 04.5': {
+        image: '../diagrams/04.5_OR_Custom_Results.jpg',
+        tail: '',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",   sample: 'L: 12000 mm',     x: 38.0, y: 30.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + r.flow + ' L/s'",    sample: 'Q: 12.5 L/s',     x: 30.0, y: 52.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",    sample: 'Wbg: 450 mm',     x: 86.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",   sample: 'Slope: 1 in 100', x: 70.0, y: 42.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",        sample: 'DP: 90 mm',       x: 15.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",      sample: 'Du: 82 mm',       x: 86.0, y: 30.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",      sample: 'Dd: 110 mm',      x: 46.0, y: 62.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Hr: ' + r.Hr + ' mm'",      sample: 'Hr: 250 mm',      x: 1.0,  y: 70.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Lr: ' + r.Lr + ' mm'",      sample: 'Lr: 500 mm',      x: 30.0, y: 86.0, fs: 12 }
+        ]
+    },
+
+    'Rainhead results (DB) — 05.4': {
+        image: '../diagrams/05.4_DBRainhead_Results.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",   sample: 'L: 12000 mm',     x: 40.0, y: 30.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + (r.display_flow != null ? r.display_flow : r.flow) + ' L/s'", sample: 'Q: 12.5 L/s', x: 33.0, y: 53.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",    sample: 'Wbg: 450 mm',     x: 84.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",   sample: 'Slope: 1 in 100', x: 70.0, y: 42.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",        sample: 'DP: 90 mm',       x: 14.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",      sample: 'Du: 82 mm',       x: 83.0, y: 28.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",      sample: 'Dd: 110 mm',      x: 45.0, y: 62.0, fs: 12 }
+        ]
+    },
+
+    'Sump results (DB) — 06.3': {
+        image: '../diagrams/06.3_DBSump_Results.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",       sample: 'L: 12000 mm',        x: 45.0, y: 28.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + r.flow + ' L/s'",        sample: 'Q: 12.5 L/s',        x: 38.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.width + ' mm'",      sample: 'Wbg: 450 mm',        x: 84.0, y: 25.0, fs: 12 },
+            { fn: 'labelRed',  expr: "r.sump_code",                    sample: 'DB-SU-450-110',      x: 28.0, y: 62.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",          sample: 'Du: 82 mm',          x: 82.0, y: 31.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",          sample: 'Dd: 110 mm',         x: 47.0, y: 63.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Overflow DP: ' + r.odp_label",  sample: 'Overflow DP: 90 mm', x: 18.0, y: 98.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Primary DP: ' + r.pdp_label",   sample: 'Primary DP: 90 mm',  x: 34.0, y: 99.0, fs: 12 }
+        ]
+    },
+
+    // ---------------- Side outlets: CSO / TSO / ESO / XSO (07-10) ----------------
+    'CSO results (DB rainhead, RH) — 07.7': {
+        image: '../diagrams/cso-results-dbr-R.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",               sample: 'Hand: Right',        x: 10.0, y: 16.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 25.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 27.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 13.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 10.0, y: 39.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wmain: ' + r.wmain + ' mm'",      sample: 'Wmain: 450 mm',      x: 28.0, y: 63.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 66.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 66.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 82.0, y: 50.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 85.0, y: 40.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wend: ' + r.wend + ' mm'",        sample: 'Wend: 300 mm',       x: 78.0, y: 42.0, fs: 11 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 56.0, y: 55.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 60.0, y: 58.0, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 40.0, y: 68.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 26.0, y: 92.0, fs: 12 }
+        ]
+    },
+
+    'CSO results (DB rainhead, LH) — 07.6': {
+        image: '../diagrams/cso-results-dbr-L.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",               sample: 'Hand: Left',         x: 82.0, y: 16.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 70.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 68.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 82.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 84.0, y: 39.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wmain: ' + r.wmain + ' mm'",      sample: 'Wmain: 450 mm',      x: 66.0, y: 63.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 28.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 28.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 12.0, y: 50.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 10.0, y: 40.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wend: ' + r.wend + ' mm'",        sample: 'Wend: 300 mm',       x: 16.0, y: 42.0, fs: 11 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 38.0, y: 55.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 36.0, y: 58.0, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 52.0, y: 68.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 68.0, y: 92.0, fs: 12 }
+        ]
+    },
+
+    'CSO results (Open rainhead, RH) — 07.9': {
+        image: '../diagrams/cso-results-or-R.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",               sample: 'Hand: Right',        x: 10.0, y: 16.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 25.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 27.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 13.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 10.0, y: 39.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wmain: ' + r.wmain + ' mm'",      sample: 'Wmain: 450 mm',      x: 28.0, y: 63.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 66.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 66.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 82.0, y: 50.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 85.0, y: 40.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wend: ' + r.wend + ' mm'",        sample: 'Wend: 300 mm',       x: 78.0, y: 42.0, fs: 11 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 56.0, y: 55.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 60.0, y: 58.0, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 40.0, y: 68.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 22.0, y: 95.0, fs: 12 }
+        ]
+    },
+
+    'CSO results (Open rainhead, LH) — 07.8': {
+        image: '../diagrams/cso-results-or-L.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",               sample: 'Hand: Left',         x: 82.0, y: 16.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 70.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 68.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 82.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 84.0, y: 39.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wmain: ' + r.wmain + ' mm'",      sample: 'Wmain: 450 mm',      x: 66.0, y: 63.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 28.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 28.0, y: 43.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 12.0, y: 50.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 10.0, y: 40.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wend: ' + r.wend + ' mm'",        sample: 'Wend: 300 mm',       x: 16.0, y: 42.0, fs: 11 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 38.0, y: 55.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 36.0, y: 58.0, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 52.0, y: 68.0, fs: 11 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 72.0, y: 95.0, fs: 12 }
+        ]
+    },
+
+    'TSO results (DB rainhead) — 08.6': {
+        image: '../diagrams/08.6_TSO_Results_DBR.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 40.95, y: 23.43, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 20.33, y: 34.69, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 17.51, y: 49.19, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 1.0,   y: 38.05, fs: 12 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 75.97, y: 45.36, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 79.67, y: 69.49, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 59.34, y: 78.89, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 74.82, y: 83.99, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 1.26,  y: 28.54, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 25.59, y: 99.0,  fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 69.75, y: 50.35, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 61.18, y: 45.25, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 45.63, y: 71.46, fs: 11 }
+        ]
+    },
+
+    'TSO results (Open rainhead) — 08.7': {
+        image: '../diagrams/08.7_TSO_Results_OR.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 40.95, y: 23.43, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 20.33, y: 34.69, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 17.51, y: 49.19, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 1.0,   y: 38.05, fs: 12 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 75.97, y: 45.36, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 79.67, y: 69.49, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 59.34, y: 78.89, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 74.82, y: 83.99, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 1.26,  y: 28.54, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 22.0,  y: 96.0,  fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 69.75, y: 50.35, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 61.18, y: 45.25, fs: 8.5 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 45.63, y: 71.46, fs: 11 }
+        ]
+    },
+
+    'ESO results (DB rainhead, RH) — 09.7': {
+        image: '../diagrams/09.7_ESO_Results_DBR_R.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",         sample: 'L: 12000 mm',        x: 42.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + flowTxt + ' L/s'",         sample: 'Q: 12.5 L/s',        x: 36.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 10.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",         sample: 'Slope: 1 in 100',    x: 27.0, y: 46.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",                sample: 'Hand: Right',        x: 55.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 30.0, y: 92.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",            sample: 'Du: 82 mm',          x: 16.0, y: 37.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 62.0, y: 41.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 70.0, y: 42.0, fs: 9 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 34.0, y: 68.0, fs: 12 }
+        ]
+    },
+
+    'ESO results (DB rainhead, LH) — 09.6': {
+        image: '../diagrams/09.6_ESO_Results_DBR_L.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",         sample: 'L: 12000 mm',        x: 52.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + flowTxt + ' L/s'",         sample: 'Q: 12.5 L/s',        x: 60.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 84.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",         sample: 'Slope: 1 in 100',    x: 68.0, y: 46.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",                sample: 'Hand: Left',         x: 40.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 64.0, y: 92.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",            sample: 'Du: 82 mm',          x: 80.0, y: 37.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 32.0, y: 41.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 24.0, y: 42.0, fs: 9 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 58.0, y: 68.0, fs: 12 }
+        ]
+    },
+
+    'ESO results (Open rainhead, RH) — 09.9': {
+        image: '../diagrams/09.9_ESO_Results_OR_R.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",         sample: 'L: 12000 mm',        x: 42.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + flowTxt + ' L/s'",         sample: 'Q: 12.5 L/s',        x: 36.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 10.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",         sample: 'Slope: 1 in 100',    x: 27.0, y: 46.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",                sample: 'Hand: Right',        x: 55.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 26.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",            sample: 'Du: 82 mm',          x: 16.0, y: 37.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 62.0, y: 41.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 70.0, y: 42.0, fs: 9 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 34.0, y: 68.0, fs: 12 }
+        ]
+    },
+
+    'ESO results (Open rainhead, LH) — 09.8': {
+        image: '../diagrams/09.8_ESO_Results_OR_L.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L: ' + r.length + ' mm'",         sample: 'L: 12000 mm',        x: 52.0, y: 22.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q: ' + flowTxt + ' L/s'",         sample: 'Q: 12.5 L/s',        x: 60.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 84.0, y: 27.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Slope: 1 in ' + r.slope",         sample: 'Slope: 1 in 100',    x: 68.0, y: 46.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Hand: ' + r.hand",                sample: 'Hand: Left',         x: 40.0, y: 50.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 70.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du: ' + r.DU + ' mm'",            sample: 'Du: 82 mm',          x: 80.0, y: 37.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 32.0, y: 41.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Drop: ' + jumpVal + ' mm'",       sample: 'Drop: 60 mm',        x: 24.0, y: 42.0, fs: 9 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 58.0, y: 68.0, fs: 12 }
+        ]
+    },
+
+    // XSO — cruciform, no calculator yet; g1/g2/g3 expressions are PROVISIONAL.
+    'XSO results (DB rainhead) — 10.6': {
+        image: '../diagrams/10.6_XSO_Results_DBR.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 22.0, y: 24.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 22.0, y: 34.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 28.0, y: 44.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 12.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 80.0, y: 60.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 70.0, y: 58.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 60.0, y: 62.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 74.0, y: 66.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'L3: ' + g3.length + ' mm'",       sample: 'L3: 10000 mm',       x: 66.0, y: 24.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q3: ' + g3.flow + ' L/s'",        sample: 'Q3: 9.0 L/s',        x: 66.0, y: 34.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S3: 1 in ' + g3.slope",           sample: 'S3: 1 in 100',       x: 78.0, y: 42.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du3: ' + g3.DU + ' mm'",          sample: 'Du3: 80 mm',         x: 84.0, y: 31.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 8.0,  y: 28.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'QT: ' + r.qt + ' L/s'",           sample: 'QT: 29.9 L/s',       x: 38.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 46.0, y: 55.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 22.0, y: 90.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 30.0, y: 70.0, fs: 11 }
+        ]
+    },
+
+    'XSO results (Open rainhead) — 10.7': {
+        image: '../diagrams/10.7_XSO_Results_OR.jpg',
+        tail: ', 0',
+        labels: [
+            { fn: 'labelBlue', expr: "'L1: ' + g1.length + ' mm'",       sample: 'L1: 12000 mm',       x: 22.0, y: 24.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q1: ' + g1.flow + ' L/s'",        sample: 'Q1: 12.5 L/s',       x: 22.0, y: 34.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S1: 1 in ' + g1.slope",           sample: 'S1: 1 in 100',       x: 28.0, y: 44.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du1: ' + g1.DU + ' mm'",          sample: 'Du1: 82 mm',         x: 12.0, y: 33.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'L2: ' + g2.length + ' mm'",       sample: 'L2: 9000 mm',        x: 80.0, y: 60.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q2: ' + g2.flow + ' L/s'",        sample: 'Q2: 8.4 L/s',        x: 70.0, y: 58.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S2: 1 in ' + g2.slope",           sample: 'S2: 1 in 120',       x: 60.0, y: 62.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du2: ' + g2.DU + ' mm'",          sample: 'Du2: 76 mm',         x: 74.0, y: 66.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'L3: ' + g3.length + ' mm'",       sample: 'L3: 10000 mm',       x: 66.0, y: 24.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Q3: ' + g3.flow + ' L/s'",        sample: 'Q3: 9.0 L/s',        x: 66.0, y: 34.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'S3: 1 in ' + g3.slope",           sample: 'S3: 1 in 100',       x: 78.0, y: 42.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Du3: ' + g3.DU + ' mm'",          sample: 'Du3: 80 mm',         x: 84.0, y: 31.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'Wbg: ' + r.wbg + ' mm'",          sample: 'Wbg: 450 mm',        x: 8.0,  y: 28.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'QT: ' + r.qt + ' L/s'",           sample: 'QT: 29.9 L/s',       x: 38.0, y: 52.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Dd: ' + r.DD + ' mm'",            sample: 'Dd: 110 mm',         x: 46.0, y: 55.0, fs: 12 },
+            { fn: 'labelBlue', expr: "'DP: ' + r.dp_label",              sample: 'DP: 90 mm',          x: 20.0, y: 95.0, fs: 12 },
+            { fn: 'labelRed',  expr: "'Total depth: ' + totalVal + ' mm'", sample: 'Total depth: 170 mm', x: 30.0, y: 70.0, fs: 11 }
+        ]
+    }
+};
+
+// The PDF places every diagram in a 188mm x 150mm box (HCO aside, which this
+// tool does not cover because it uses absolute mm coordinates).
+const PDF_IMG_H_MM = 150;
+
+const LS_KEY = 'db-diagram-editor-custom-presets';
+
+const stage    = document.getElementById('stage');
+const img      = document.getElementById('diagram');
+const outBox   = document.getElementById('out');
+const presetEl = document.getElementById('preset');
+const cross    = document.getElementById('crosshair');
+
+let customPresets = loadCustom();
+let labels = [];      // working copies: { name, expr, x, y, fs, color:[r,g,b] }
+let noteAnchor = null;
+let selected = null;
+
+function loadCustom() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }
+    catch (e) { return {}; }
+}
+function saveCustom() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(customPresets)); }
+    catch (e) { alert('Could not save to localStorage (storage full?). Export the preset JSON to keep your work.'); }
+}
+
+function isCustom(name) { return Object.prototype.hasOwnProperty.call(customPresets, name); }
+
+function getPreset(name) { return isCustom(name) ? customPresets[name] : PRESETS[name]; }
+
+// Built-in labels carry fn (labelBlue/labelRed); normalise everything to color.
+function normaliseLabel(l) {
+    return {
+        // `name` is the on-diagram display text (a realistic placeholder result,
+        // e.g. 'Wbg: 450 mm') used for placement and as the calls-format quote
+        // fallback. `key` is the array-format identity (e.g. 'Wbg') emitted in
+        // ['key', x, y] — kept separate so SSO can show a realistic placeholder
+        // while still writing the short WIZ_PDF_LABELS key.
+        name:  l.name !== undefined ? l.name : l.sample,
+        key:   l.key,
+        expr:  l.expr || '',
+        x: l.x, y: l.y,
+        fs: l.fs !== undefined ? l.fs : 12,
+        color: l.color ? l.color.slice() : (l.fn === 'labelRed' ? RED.slice() : BLUE.slice())
+    };
+}
+
+function rebuildPresetList() {
+    presetEl.innerHTML = '';
+    Object.keys(PRESETS).forEach(function (k) {
+        const o = document.createElement('option');
+        o.value = k; o.textContent = k;
+        presetEl.appendChild(o);
+    });
+    Object.keys(customPresets).forEach(function (k) {
+        const o = document.createElement('option');
+        o.value = k; o.textContent = '★ ' + k;
+        presetEl.appendChild(o);
+    });
+}
+
+function fontPx(fs) {
+    // fs pt -> mm (jsPDF) -> px at current display size
+    return fs * 0.3528 * (img.clientHeight / PDF_IMG_H_MM);
+}
+
+function sameColor(a, b) { return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]; }
+
+function rgbToHex(c) {
+    return '#' + c.map(function (v) { return ('0' + v.toString(16)).slice(-2); }).join('');
+}
+function hexToRgb(h) {
+    return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+
+function renderLabels() {
+    stage.querySelectorAll('.lbl').forEach(function (n) { n.remove(); });
+    labels.forEach(function (l, i) {
+        const d = document.createElement('div');
+        d.className = 'lbl' + (selected === i ? ' selected' : '');
+        d.textContent = l.name;
+        d.style.left = l.x + '%';
+        d.style.top  = l.y + '%';
+        d.style.fontSize = fontPx(l.fs) + 'px';
+        d.style.color = 'rgb(' + l.color.join(',') + ')';
+        d.dataset.idx = i;
+        stage.appendChild(d);
+    });
+    updateOut();
+    updateInspector();
+    persistIfCustom();
+}
+
+function persistIfCustom() {
+    const name = presetEl.value;
+    if (!isCustom(name)) return;
+    customPresets[name].labels = labels.map(function (l) { return Object.assign({}, l, { color: l.color.slice() }); });
+    saveCustom();
+}
+
+// ── inspector ──
+const noSel   = document.getElementById('noSel');
+const selForm = document.getElementById('selForm');
+const fName   = document.getElementById('fName');
+const fExpr   = document.getElementById('fExpr');
+const fFs     = document.getElementById('fFs');
+const fColor  = document.getElementById('fColor');
+const fCoords = document.getElementById('fCoords');
+
+function updateInspector() {
+    if (selected === null || !labels[selected]) {
+        noSel.style.display = 'block'; selForm.style.display = 'none'; return;
+    }
+    const l = labels[selected];
+    noSel.style.display = 'none'; selForm.style.display = 'block';
+    if (document.activeElement !== fName)  fName.value  = l.name;
+    if (document.activeElement !== fExpr)  fExpr.value  = l.expr;
+    if (document.activeElement !== fFs)    fFs.value    = l.fs;
+    fColor.value = rgbToHex(l.color);
+    fCoords.textContent = 'x: ' + l.x.toFixed(2) + ' %   y: ' + l.y.toFixed(2) + ' %';
+}
+
+fName.addEventListener('input', function () {
+    if (selected === null) return;
+    labels[selected].name = fName.value;
+    renderLabels();
+});
+fExpr.addEventListener('input', function () {
+    if (selected === null) return;
+    labels[selected].expr = fExpr.value;
+    updateOut(); persistIfCustom();
+});
+fFs.addEventListener('input', function () {
+    if (selected === null) return;
+    const v = parseFloat(fFs.value);
+    if (!isNaN(v) && v > 0) { labels[selected].fs = v; renderLabels(); }
+});
+fColor.addEventListener('input', function () {
+    if (selected === null) return;
+    labels[selected].color = hexToRgb(fColor.value);
+    renderLabels();
+});
+document.getElementById('swBlue').addEventListener('click', function () {
+    if (selected === null) return;
+    labels[selected].color = BLUE.slice(); renderLabels();
+});
+document.getElementById('swRed').addEventListener('click', function () {
+    if (selected === null) return;
+    labels[selected].color = RED.slice(); renderLabels();
+});
+
+// ── add / duplicate / delete labels ──
+document.getElementById('addLabel').addEventListener('click', function () {
+    labels.push({ name: 'New label', expr: '', x: 45, y: 45, fs: 12, color: RED.slice() });
+    selected = labels.length - 1;
+    renderLabels();
+    fName.focus(); fName.select();
+});
+document.getElementById('dupLabel').addEventListener('click', function () {
+    if (selected === null) return;
+    const l = labels[selected];
+    labels.push(Object.assign({}, l, { color: l.color.slice(), x: l.x + 3, y: l.y + 3 }));
+    selected = labels.length - 1;
+    renderLabels();
+});
+document.getElementById('delLabel').addEventListener('click', function () {
+    if (selected === null) return;
+    labels.splice(selected, 1);
+    selected = null;
+    renderLabels();
+});
+
+// ── output generation ──
+function quoted(s) { return "'" + String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'"; }
+
+// Where each preset's generated rows belong in the calculator source — shown as
+// a header above the generated code so each diagram's data drops straight in.
+const PRESET_DEST = {
+    'HCO results (DB, 1 gutter) — 02.2':      'hco.js  HCO_PDF_LABELS.dambuster[1]',
+    'HCO results (DB, 2 gutters) — 02.3':     'hco.js  HCO_PDF_LABELS.dambuster[2]',
+    'HCO results (Custom, 1 gutter) — 02.5':  'hco.js  HCO_PDF_LABELS.custom[1]',
+    'HCO results (Custom, 2 gutters) — 02.6': 'hco.js  HCO_PDF_LABELS.custom[2]',
+    'SSO results (DB, 1 gutter) — 03.3':      'sso.js  WIZ_PDF_LABELS.dambuster[1]',
+    'SSO results (DB, 2 gutters) — 03.4':     'sso.js  WIZ_PDF_LABELS.dambuster[2]',
+    'SSO results (Custom, 1 gutter) — 03.7':  'sso.js  WIZ_PDF_LABELS.custom[1]',
+    'SSO results (Custom, 2 gutters) — 03.8': 'sso.js  WIZ_PDF_LABELS.custom[2]'
+};
+
+function updateOut() {
+    const format = document.getElementById('outFormat').value;
+    const p = getPreset(presetEl.value) || {};
+    const lines = [];
+
+    // Name the diagram this output belongs to, plus (for the table formats) the
+    // exact slot to paste it into.
+    const destIndent = (format === 'array') ? '            ' : '    ';
+    lines.push(destIndent + '// ' + presetEl.value.replace(/^★ /, ''));
+    if (PRESET_DEST[presetEl.value]) lines.push(destIndent + '// → ' + PRESET_DEST[presetEl.value]);
+
+    if (format === 'array') {
+        // Rows for a [key, x, y] table (SSO WIZ_PDF_LABELS, HCO HCO_PDF_LABELS).
+        // Colour comes from the consuming code's key map. Font size is the fixed
+        // default (8) for most labels, so only append fs when it differs — that
+        // keeps SSO rows as [key,x,y] while preserving e.g. HCO's Loc at fs 7.
+        labels.forEach(function (l) {
+            const fsPart = (l.fs !== undefined && l.fs !== 8) ? ', ' + l.fs : '';
+            lines.push('            [' + quoted(l.key || l.name) + ', ' + l.x.toFixed(2) + ', ' + l.y.toFixed(2) + fsPart + '],');
+        });
+    } else {
+        let usedCustomColor = false;
+        labels.forEach(function (l) {
+            const expr = l.expr && l.expr.trim() !== '' ? l.expr : quoted(l.name);
+            const tail = p.tail || '';
+            if (sameColor(l.color, BLUE)) {
+                lines.push('    labelBlue(' + expr + ', ' + l.x.toFixed(2) + ', ' + l.y.toFixed(2) + ', ' + l.fs + tail + ');');
+            } else if (sameColor(l.color, RED)) {
+                lines.push('    labelRed(' + expr + ', ' + l.x.toFixed(2) + ', ' + l.y.toFixed(2) + ', ' + l.fs + tail + ');');
+            } else {
+                lines.push('    labelRGB(' + expr + ', ' + l.x.toFixed(2) + ', ' + l.y.toFixed(2) + ', ' + l.fs + ', [' + l.color.join(', ') + ']);');
+                usedCustomColor = true;
+            }
+        });
+        if (usedCustomColor) {
+            lines.unshift('    // function labelRGB(text, xPct, yPct, fs, rgb) { doc.setFont(\'helvetica\', \'bold\'); doc.setFontSize(fs); doc.setTextColor(rgb[0], rgb[1], rgb[2]); doc.text(text, px(xPct), py(yPct)); }');
+            lines.unshift('    // labelRGB is not a standard helper — add it next to labelBlue/labelRed:');
+        }
+        if (noteAnchor) {
+            // Emit the parapet-note block in full so pasting over the whole
+            // region (labels + note) always produces valid code.
+            lines.push('');
+            lines.push('    // Parapet-reduction note on the diagram — only when total depth exceeds the');
+            lines.push("    // chosen rainhead's receiver depth (200 for R-200/R-300, 250 for R-400).");
+            lines.push('    // Anchor (x,y %) marks the top-left of the "Note" heading.');
+            lines.push('    if (r.dm_receiver && r.total_depth > r.dm_receiver) {');
+            lines.push('        const nx = px(' + noteAnchor.x.toFixed(2) + '), ny = py(' + noteAnchor.y.toFixed(2) + ');');
+            lines.push("        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(192, 57, 43);");
+            lines.push("        doc.text('Note', nx, ny);");
+            lines.push("        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(40, 50, 65);");
+            lines.push('        const noteTxt = "The depth of the short, deep \'outlet\' box gutter may be reduced to " +');
+            lines.push("            r.dm_receiver + ' mm through the parapet wall to match the depth of the box gutter receiver to the rainhead.';");
+            lines.push('        const lines = doc.splitTextToSize(noteTxt, 60);   // wrap width (mm)');
+            lines.push('        doc.text(lines, nx, ny + 4);');
+            lines.push('    }');
+        }
+    }
+    outBox.value = lines.join('\n');
+}
+
+document.getElementById('outFormat').addEventListener('change', updateOut);
+
+// ── preset loading ──
+function loadPreset(name) {
+    const p = getPreset(name);
+    if (!p) return;
+    labels = (p.labels || []).map(normaliseLabel);
+    noteAnchor = p.note ? Object.assign({}, p.note) : null;
+    selected = null;
+    // Each preset knows which output shape its calculator consumes, so the
+    // Generated-code box is always the right format to paste back in.
+    const fmtSel = document.getElementById('outFormat');
+    if (fmtSel) fmtSel.value = (p.format === 'array') ? 'array' : 'calls';
+    img.onload = renderLabels;
+    img.src = p.image;
+    if (img.complete) renderLabels();
+    document.getElementById('deleteDiagram').disabled = !isCustom(name);
+}
+
+presetEl.addEventListener('change', function () { loadPreset(presetEl.value); });
+
+// ── new / delete diagram ──
+const newPanel = document.getElementById('newPanel');
+document.getElementById('newDiagram').addEventListener('click', function () {
+    newPanel.style.display = 'block';
+    document.getElementById('newName').focus();
+});
+document.getElementById('cancelDiagram').addEventListener('click', function () {
+    newPanel.style.display = 'none';
+});
+
+let pendingFileDataUrl = null;
+document.getElementById('newFile').addEventListener('change', function () {
+    const f = this.files && this.files[0];
+    pendingFileDataUrl = null;
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () { pendingFileDataUrl = reader.result; };
+    reader.readAsDataURL(f);
+});
+
+document.getElementById('createDiagram').addEventListener('click', function () {
+    const name = document.getElementById('newName').value.trim();
+    const url  = document.getElementById('newUrl').value.trim();
+    const src  = pendingFileDataUrl || url;
+    if (!name) { alert('Enter a diagram name.'); return; }
+    if (!src)  { alert('Enter an image URL or choose a local file.'); return; }
+    if (PRESETS[name] || customPresets[name]) { alert('A diagram with that name already exists.'); return; }
+    customPresets[name] = { image: src, tail: '', labels: [] };
+    saveCustom();
+    rebuildPresetList();
+    presetEl.value = name;
+    loadPreset(name);
+    newPanel.style.display = 'none';
+    document.getElementById('newName').value = '';
+    document.getElementById('newUrl').value = '';
+    document.getElementById('newFile').value = '';
+    pendingFileDataUrl = null;
+});
+
+document.getElementById('deleteDiagram').addEventListener('click', function () {
+    const name = presetEl.value;
+    if (!isCustom(name)) return;
+    if (!confirm('Delete custom diagram "' + name + '" and its labels?')) return;
+    delete customPresets[name];
+    saveCustom();
+    rebuildPresetList();
+    loadPreset(presetEl.value);
+});
+
+// ── export / import ──
+document.getElementById('exportJson').addEventListener('click', function () {
+    const p = getPreset(presetEl.value);
+    outBox.value = JSON.stringify({
+        name: presetEl.value.replace(/^★ /, ''),
+        image: p.image,
+        labels: labels
+    }, null, 2);
+});
+document.getElementById('importJson').addEventListener('click', function () {
+    let data;
+    try { data = JSON.parse(outBox.value); }
+    catch (e) { alert('The output box does not contain valid JSON. Use Export preset JSON first, or paste a preset JSON in.'); return; }
+    if (!data || !data.image || !Array.isArray(data.labels)) { alert('JSON must have "image" and "labels".'); return; }
+    let name = data.name || 'Imported diagram';
+    while (PRESETS[name] || customPresets[name]) name += ' (copy)';
+    customPresets[name] = { image: data.image, tail: '', labels: data.labels.map(normaliseLabel) };
+    saveCustom();
+    rebuildPresetList();
+    presetEl.value = name;
+    loadPreset(name);
+});
+
+// ── dragging ──
+let drag = null;
+stage.addEventListener('mousedown', function (e) {
+    const t = e.target.closest('.lbl');
+    if (!t) { selected = null; renderLabels(); return; }
+    selected = parseInt(t.dataset.idx, 10);
+    const l = labels[selected];
+    drag = { startX: e.clientX, startY: e.clientY, origX: l.x, origY: l.y, el: t };
+    t.classList.add('dragging');
+    renderLabels();
+    e.preventDefault();
+});
+document.addEventListener('mousemove', function (e) {
+    const r = img.getBoundingClientRect();
+    const xp = ((e.clientX - r.left) / r.width * 100);
+    const yp = ((e.clientY - r.top) / r.height * 100);
+    cross.textContent = 'x: ' + xp.toFixed(2) + ', y: ' + yp.toFixed(2);
+    if (!drag) return;
+    const l = labels[selected];
+    l.x = drag.origX + (e.clientX - drag.startX) / r.width * 100;
+    l.y = drag.origY + (e.clientY - drag.startY) / r.height * 100;
+    renderLabels();
+});
+document.addEventListener('mouseup', function () { drag = null; });
+
+// ── keyboard nudging: 0.1% per press, 1% with Shift ──
+document.addEventListener('keydown', function (e) {
+    if (selected === null) return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    const step = e.shiftKey ? 1.0 : 0.1;
+    const l = labels[selected];
+    if (e.key === 'ArrowLeft')  { l.x -= step; }
+    else if (e.key === 'ArrowRight') { l.x += step; }
+    else if (e.key === 'ArrowUp')    { l.y -= step; }
+    else if (e.key === 'ArrowDown')  { l.y += step; }
+    else if (e.key === 'Delete') { labels.splice(selected, 1); selected = null; }
+    else return;
+    e.preventDefault();
+    renderLabels();
+});
+
+document.getElementById('copy').addEventListener('click', function () {
+    outBox.select();
+    document.execCommand('copy');
+    const c = document.getElementById('copied');
+    c.style.visibility = 'visible';
+    setTimeout(function () { c.style.visibility = 'hidden'; }, 1500);
+});
+
+rebuildPresetList();
+loadPreset(Object.keys(PRESETS)[0]);
+</script>
+</body>
+</html>
