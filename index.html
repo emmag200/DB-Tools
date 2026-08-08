@@ -102,13 +102,24 @@
     <h2>Selected label</h2>
     <div id="selPanel"><div class="selnone">Nothing selected.</div></div>
 
+    <h2>Project (save / load)</h2>
+    <div class="hint">Save keeps every mode &amp; variant, including custom and renamed labels. Load restores them.</div>
+    <div class="row">
+      <button onclick="saveProject()" class="alt">Save .json</button>
+      <button onclick="document.getElementById('loadFile').click()" class="alt">Load .json</button>
+    </div>
+    <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+
     <h2>Export</h2>
     <div class="row">
       <button onclick="resetAll()" class="alt">Reset all</button>
       <button onclick="genCode()">Generate code</button>
     </div>
-    <textarea id="output" readonly placeholder="Generate code to get the labelRed / labelBlue lines."></textarea>
-    <button onclick="copyOut()" style="margin-top:6px; width:100%;">Copy code</button>
+    <textarea id="output" placeholder="Generate code to get the labelRed / labelBlue lines — or paste previously generated code here and click Import."></textarea>
+    <div class="row" style="margin-top:6px;">
+      <button onclick="copyOut()">Copy code</button>
+      <button onclick="importCode()" class="alt">Import pasted code</button>
+    </div>
   </div>
 </div>
 
@@ -339,11 +350,54 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
   rd.readAsDataURL(f);
 });
 
+// Per-domain persistent store so placements survive mode switches AND can be
+// saved/loaded. Live `placed{}` is the working copy for the active domain;
+// flushDomain() writes it back, loadDomainState() pulls it in.
+const store = {};   // store[dom] = { placed, custom:[...], renames:{...} }
+
+function ensureStore(dom) {
+  if (!store[dom]) store[dom] = { placed: {}, custom: [], renames: {} };
+  return store[dom];
+}
+
+// Capture the active domain's live state (placements + custom/renamed labels).
+function flushDomain() {
+  const s = ensureStore(domain);
+  s.placed = placed;
+  s.custom = [];
+  s.renames = {};
+  DOMAINS[domain].labels.forEach(l => {
+    if (l.custom) {
+      s.custom.push({ key:l.key, name:l.name, color:l.color, expr:l.expr, preview:l.preview });
+    } else if (l._origExpr != null || (l.name != null && l.name !== l.key)) {
+      s.renames[l.key] = { name:l.name, expr:l.expr, preview:l.preview, color:l.color,
+                           _origExpr:l._origExpr, _origPrefix:l._origPrefix, _previewSuffix:l._previewSuffix };
+    }
+  });
+}
+
+// Rebuild the active domain from its stored state (inverse of flushDomain).
+function loadDomainState() {
+  const s = ensureStore(domain);
+  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom);
+  DOMAINS[domain].labels.forEach(l => {
+    const rn = s.renames[l.key];
+    if (rn) { l.name=rn.name; l.expr=rn.expr; l.preview=rn.preview; if(rn.color) l.color=rn.color;
+              l._origExpr=rn._origExpr; l._origPrefix=rn._origPrefix; l._previewSuffix=rn._previewSuffix; }
+    else { delete l.name; }
+  });
+  s.custom.forEach(c => DOMAINS[domain].labels.push(
+    { key:c.key, name:c.name, color:c.color, custom:true, expr:c.expr, preview:c.preview }));
+  rebuildLabelIndex();
+  placed = s.placed || {};
+}
+
 function setDomain(dom) {
   if (dom === domain) return;
+  flushDomain();                                    // preserve current domain's work
   domain = dom;
-  rebuildLabelIndex();
-  placed = {}; selKey = null; layout = 1;            // fresh start in the new domain
+  loadDomainState();                                // restore target domain's work
+  selKey = null; layout = 1;
 
   // Highlight the active domain button.
   ['SSO','OR','R','SU','ESO','TSO','CSO'].forEach(d => {
@@ -613,7 +667,16 @@ function deleteSel() {
   renderPalette(); renderAll(); renderSelPanel();
 }
 
-function resetAll() { if (confirm('Clear all placed labels?')) { placed = {}; selKey = null; renderPalette(); renderAll(); renderSelPanel(); } }
+function resetAll() {
+  if (!confirm('Clear all placed labels in this mode?')) return;
+  placed = {}; selKey = null;
+  // also clear this domain's stored custom labels / renames
+  store[domain] = { placed: {}, custom: [], renames: {} };
+  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom);
+  DOMAINS[domain].labels.forEach(l => { delete l.name; delete l._origExpr; delete l._origPrefix; delete l._previewSuffix; });
+  rebuildLabelIndex();
+  renderPalette(); renderAll(); renderSelPanel();
+}
 
 function emitLabelLines(prefix) {
   // prefix = variant namespace ('' for non-variant domains)
@@ -649,6 +712,85 @@ function genCode() {
   document.getElementById('output').value = out.join('\n');
 }
 function copyOut() { const t = document.getElementById('output'); t.select(); document.execCommand('copy'); }
+
+// ── Save / Load project ──────────────────────────────────────────────────────
+function saveProject() {
+  flushDomain();                                  // capture current domain first
+  const data = { format: 'labelplacer', version: 1, savedAt: new Date().toISOString(), store: store };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'label-placements-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function loadProjectData(data) {
+  if (!data || data.format !== 'labelplacer' || !data.store) {
+    alert('That file is not a label-placer project.'); return;
+  }
+  // Replace the store wholesale, then re-enter the current domain from it.
+  Object.keys(store).forEach(k => delete store[k]);
+  Object.keys(data.store).forEach(k => store[k] = data.store[k]);
+  loadDomainState();
+  selKey = null;
+  renderPalette(); renderAll(); renderSelPanel();
+  alert('Project loaded. All modes and variants restored.');
+}
+
+document.getElementById('loadFile').addEventListener('change', function(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = ev => {
+    try { loadProjectData(JSON.parse(ev.target.result)); }
+    catch (err) { alert('Could not read that file: ' + err.message); }
+  };
+  rd.readAsText(f);
+  e.target.value = '';                            // allow re-loading the same file
+});
+
+// ── Import from pasted generated code ────────────────────────────────────────
+// Parses lines like:  L1 -> labelBlue('L1: ' + g1.length + ' mm', 30, 21, 12, 0);
+// Matches each to a label in the CURRENT mode by its display name (the bit
+// before '->'). Variant headers  // ---- variant 'dbr-L' ----  route placements.
+function importCode() {
+  const text = document.getElementById('output').value;
+  if (!text.trim()) { alert('Paste previously generated code into the box first.'); return; }
+  const lines = text.split('\n');
+  const v = DOMAINS[domain].variants;
+  let curVariant = '';                            // '' = non-variant / default
+  let applied = 0, skipped = 0;
+
+  lines.forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    // variant header?
+    const vh = line.match(/^\/\/\s*-+\s*variant\s+'([^']+)'/i);
+    if (vh) { curVariant = v ? vh[1] : ''; return; }
+    if (line.startsWith('//')) return;            // other comments
+    // "<name> -> labelRed/Blue( <expr...> , x, y, fs, angle );"
+    const m = line.match(/^(.+?)\s*->\s*label(?:Red|Blue)\((.*)\)\s*;?\s*$/);
+    if (!m) return;
+    const name = m[1].trim();
+    const args = m[2];
+    // pull the trailing 4 numbers (x, y, fs, angle)
+    const nums = args.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (!nums) { skipped++; return; }
+    const x = parseFloat(nums[1]), y = parseFloat(nums[2]), fs = parseFloat(nums[3]), angle = parseFloat(nums[4]);
+    // find the matching label in the current mode by display name
+    const lab = LABELS.find(l => labelName(l) === name);
+    if (!lab) { skipped++; return; }
+    const keyName = curVariant ? (curVariant + '::' + lab.key) : lab.key;
+    placed[keyName] = { x: x, y: y, fs: fs, angle: angle };
+    applied++;
+  });
+
+  if (applied === 0) { alert('No placements matched labels in the current mode. Are you in the right mode?'); return; }
+  selKey = null;
+  renderPalette(); renderAll(); renderSelPanel();
+  alert('Imported ' + applied + ' placement' + (applied===1?'':'s') +
+        (skipped ? (' (' + skipped + ' line' + (skipped===1?'':'s') + ' skipped).') : '.'));
+}
 
 window.addEventListener('resize', renderAll);
 setLayout(1);
