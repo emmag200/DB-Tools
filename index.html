@@ -86,15 +86,7 @@
 
     <h2>Diagram</h2>
     <div class="filein"><input type="file" id="fileInput" accept="image/*"></div>
-    <div class="ctl" id="layoutRow" style="margin-top:8px;">
-      <label id="layoutLabel">Layout</label>
-      <div class="row">
-        <button id="lay1" class="alt sel" onclick="setLayout(1)">1 gutter</button>
-        <button id="lay2" class="alt" onclick="setLayout(2)">2 gutters</button>
-      </div>
-    </div>
-    <div id="variantRow" style="display:none; margin-top:8px;"></div>
-    <div class="hint" id="layoutHint">Click a label below to add it; drag it on the image to position. Select a placed label to rotate / resize it. 2-gutter-only labels (D2U, D2D, L2, Q2) are hidden in 1-gutter mode.</div>
+    <div class="hint" id="layoutHint" style="margin-top:8px;">Click a label below to add it; drag it to position. Double-click a placed label to duplicate it.</div>
 
     <h2>Add label</h2>
     <div class="palette" id="palette"></div>
@@ -130,26 +122,22 @@ const PT_TO_MM = 0.3528;
 const DEFAULT_FS = 12;
 
 // ── Label sets per calculator domain ────────────────────────────────────────
-// Each label: key, color, code expr, preview text.
-//   two:true   → SSO: only in 2-gutter layout.
-//   modes:[..] → OR:  only in the listed layouts (1=Dam Buster, 2=Custom).
-//                Labels with no `modes` show in both OR sub-modes.
+// Each label: key, color, code expr, preview text. All labels in a mode are
+// always available — pick which to add. Double-click a placed label to duplicate.
 //
 // SSO uses PDF-mm coordinates (image fixed at 10,10, 190×150 mm).
-// OR uses PERCENT coordinates (0–100 across / down, top-left = 0,0) so the
-// labels are independent of where the diagram lands on the OR PDF.
+// Other modes use PERCENT coordinates (0–100 across / down, top-left = 0,0) so
+// the labels are independent of where the diagram lands on the PDF.
 const DOMAINS = {
   SSO: {
     coord: 'mm',
-    layoutLabel: 'Layout',
-    lay1: '1 gutter', lay2: '2 gutters',
-    hint: 'Click a label below to add it; drag it on the image to position. 2-gutter-only labels (D2U, D2D, L2, Q2) are hidden in 1-gutter mode.',
+    hint: 'Click a label below to add it; drag it to position. Double-click a placed label to duplicate it.',
     codeHeader: '// ── SSO page-2 diagram labels (from editor) ──',
     labels: [
       { key:'D1U',        color:'red',  expr:"'D1U: ' + data.D1U",                preview:'D1U: 115 mm' },
       { key:'D1D',        color:'red',  expr:"'D1D: ' + data.Downstream",         preview:'D1D: 265 mm' },
-      { key:'D2U',        color:'red',  two:true, expr:"'D2U: ' + data.D2U",      preview:'D2U: 130 mm' },
-      { key:'D2D',        color:'red',  two:true, expr:"'D2D: ' + data.Downstream",preview:'D2D: 265 mm' },
+      { key:'D2U',        color:'red',  expr:"'D2U: ' + data.D2U",      preview:'D2U: 130 mm' },
+      { key:'D2D',        color:'red',  expr:"'D2D: ' + data.Downstream",preview:'D2D: 265 mm' },
       { key:'Ds_3d',      color:'red',  expr:"'Ds: ' + data.sumpDepth + ' mm'",   preview:'Ds: 50 mm' },
       { key:'Ds_section', color:'red',  expr:"'Ds: ' + data.sumpDepth + ' mm'",   preview:'Ds: 50 mm' },
       { key:'Ls_3d',      color:'red',  expr:"'Ls: ' + data.sumpLength + ' mm'",  preview:'Ls: 400 mm' },
@@ -163,17 +151,16 @@ const DOMAINS = {
       { key:'Wbg',        color:'blue', expr:"'Wbg: ' + Wbg + 'mm'",              preview:'Wbg: 400mm' },
       { key:'L1',         color:'blue', expr:"'L1: ' + L1",                       preview:'L1: 15000mm' },
       { key:'Q1',         color:'blue', expr:"'Q1: ' + Q1 + ' L/s'",             preview:'Q1: 3.0 L/s' },
-      { key:'L2',         color:'blue', two:true, expr:"'L2: ' + L2",            preview:'L2: 12000mm' },
-      { key:'Q2',         color:'blue', two:true, expr:"'Q2: ' + Q2 + ' L/s'",   preview:'Q2: 2.5 L/s' },
+      { key:'L2',         color:'blue', expr:"'L2: ' + L2",            preview:'L2: 12000mm' },
+      { key:'Q2',         color:'blue', expr:"'Q2: ' + Q2 + ' L/s'",   preview:'Q2: 2.5 L/s' },
       { key:'DPsize',     color:'blue', expr:"'DP size: ' + dpLabel",            preview:'DP size: 100mm DIAM' },
       { key:'Woc',        color:'blue', expr:"'Woc: ' + data.sodWidth + ' mm'",  preview:'Woc: 200 mm' },
+      { key:'Note',       color:'red',  expr:"'Note'",                           preview:'Note' },
     ]
   },
   OR: {
     coord: 'pct',
-    layoutLabel: 'Rainhead mode',
-    lay1: 'Dam Buster', lay2: 'Custom',
-    hint: 'Click a label below to add it; drag it to position. Coordinates are % of the image (top-left = 0,0), so they work wherever the diagram sits on the PDF. ORsize shows in Dam Buster mode; Hr/Lr show in Custom mode.',
+    hint: 'Click a label below to add it; drag it to position. Double-click a placed label to duplicate it. Coordinates are % of the image (top-left = 0,0).',
     codeHeader: '// ── OR diagram labels (from editor) — x,y are % of image ──',
     // expr fields reference the OR calculate-result object `r` (see OR-JavaS.JS wizRenderResults)
     labels: [
@@ -184,14 +171,14 @@ const DOMAINS = {
       { key:'DPsize', color:'blue', expr:"'DP: ' + r.dp_label",        preview:'DP: 100 DIAM' },
       { key:'Du',     color:'red',  expr:"'Du: ' + r.DU + ' mm'",      preview:'Du: 80 mm' },
       { key:'Dd',     color:'red',  expr:"'Dd: ' + r.DD + ' mm'",      preview:'Dd: 120 mm' },
-      { key:'ORsize', color:'red',  modes:[1], expr:"'OR: ' + r.product_label", preview:'OR: OR-400' },
-      { key:'Hr',     color:'red',  modes:[2], expr:"'Hr: ' + r.Hr + ' mm'",    preview:'Hr: 250 mm' },
-      { key:'Lr',     color:'red',  modes:[2], expr:"'Lr: ' + r.Lr + ' mm'",    preview:'Lr: 400 mm' },
+      { key:'ORsize', color:'red',  expr:"'OR: ' + r.product_label", preview:'OR: OR-400' },
+      { key:'Hr',     color:'red',  expr:"'Hr: ' + r.Hr + ' mm'",    preview:'Hr: 250 mm' },
+      { key:'Lr',     color:'red',  expr:"'Lr: ' + r.Lr + ' mm'",    preview:'Lr: 400 mm' },
+      { key:'Note',   color:'red',  expr:"'Note'",                   preview:'Note' },
     ]
   },
   R: {
     coord: 'pct',
-    single: true,                         // no sub-modes → layout toggle hidden
     hint: 'Click a label below to add it; drag it to position. Coordinates are % of the image (top-left = 0,0). The product name is printed as the page title in the PDF, so there is no product label here.',
     codeHeader: '// ── Rainhead diagram labels (from editor) — x,y are % of image ──',
     // expr fields reference the Rainhead calculate-result object `r` (see RH JS wizRenderResults)
@@ -203,11 +190,11 @@ const DOMAINS = {
       { key:'DPsize', color:'blue', expr:"'DP: ' + r.dp_label",        preview:'DP: 100 DIAM' },
       { key:'Du',     color:'red',  expr:"'Du: ' + r.DU + ' mm'",      preview:'Du: 80 mm' },
       { key:'Dd',     color:'red',  expr:"'Dd: ' + r.DD + ' mm'",      preview:'Dd: 120 mm' },
+      { key:'Note',   color:'red',  expr:"'Note'",                     preview:'Note' },
     ]
   },
   SU: {
     coord: 'pct',
-    single: true,                         // no sub-modes → layout toggle hidden
     hint: 'Click a label below to add it; drag it to position. Coordinates are % of the image (top-left = 0,0). Single-gutter sump set: L/Q/Wbg/Du/Dd plus Sump code and both downpipe labels.',
     codeHeader: '// ── Sump diagram labels (from editor) — x,y are % of image ──',
     // expr fields reference the Sump calculate-result object `r` (see sump-calculator.php frontend wizRenderResults)
@@ -220,11 +207,11 @@ const DOMAINS = {
       { key:'Dd',         color:'red',  expr:"'Dd: ' + r.DD + ' mm'",            preview:'Dd: 120 mm' },
       { key:'OverflowDP', color:'red',  expr:"'Overflow DP: ' + r.odp_label",    preview:'Overflow DP: 90 DIAM' },
       { key:'NormalDP',   color:'red',  expr:"'Normal DP: ' + r.pdp_label",      preview:'Normal DP: 100 DIAM' },
+      { key:'Note',       color:'red',  expr:"'Note'",                           preview:'Note' },
     ]
   },
   ESO: {
     coord: 'pct',
-    single: true,                         // no sub-modes → layout toggle hidden
     hint: 'Click a label below to add it; drag it to position. Coordinates are % of the image (top-left = 0,0). End Side Outlet set: L/Q/Wbg/S/Hand/DP plus Du/Dd. The product name is the PDF page title, so there is no product label here.',
     codeHeader: '// ── ESO diagram labels (from editor) — x,y are % of image ──',
     // expr fields reference the ESO calculate-result object `r` (see eso JS wizRenderResults)
@@ -237,11 +224,11 @@ const DOMAINS = {
       { key:'DPsize', color:'blue', expr:"'DP: ' + r.dp_label",        preview:'DP: 100 DIAM' },
       { key:'Du',     color:'red',  expr:"'Du: ' + r.DU + ' mm'",      preview:'Du: 80 mm' },
       { key:'Dd',     color:'red',  expr:"'Dd: ' + r.DD + ' mm'",      preview:'Dd: 120 mm' },
+      { key:'Note',   color:'red',  expr:"'Note'",                     preview:'Note' },
     ]
   },
   TSO: {
     coord: 'pct',
-    single: true,                         // no sub-modes → layout toggle hidden
     hint: 'Click a label below to add it; drag it to position. Coordinates are % of the image (top-left = 0,0). Two-gutter T side outlet: Gutter 1 (L1/Q1/S1/Du1), Gutter 2 (L2/Q2/S2/Du2), shared Wbg/Dd/DP, plus Drop, Total depth and the parapet Note anchor. Device code is the PDF page title.',
     codeHeader: '// ── TSO diagram labels (from editor) — x,y are % of image. ' +
                 'Needs locals: flowTxt, jumpVal, totalVal, g1=r.gutters[0], g2=r.gutters[1] ──',
@@ -262,25 +249,14 @@ const DOMAINS = {
       { key:'DPsize',color:'blue', expr:"'DP: ' + r.dp_label",                preview:'DP: 100 DIAM' },
       { key:'Dd',    color:'red',  expr:"'Dd: ' + r.DD + ' mm'",              preview:'Dd: 120 mm' },
       { key:'Drop',  color:'red',  expr:"'Drop: ' + jumpVal + ' mm'",         preview:'Drop: 60 mm' },
-      { key:'Total', color:'red',  expr:"'Total depth: ' + totalVal + ' mm'", preview:'Total depth: 180 mm' },
+      { key:'Total', color:'red',  expr:"'DT: ' + totalVal + ' mm'",         preview:'DT: 180 mm' },
       // Parapet note anchor — body text stays in the conditional PDF block.
       { key:'Note',  color:'red',  expr:"'Note'",                             preview:'Note' },
     ]
   },
   CSO: {
     coord: 'pct',
-    // Two orthogonal sub-mode axes → 4 variants. Each variant stores its own
-    // placements and exports its own block, keyed 'dbr-L' | 'dbr-R' | 'or-L' | 'or-R'
-    // to match the CSO PDF's `labelKey = resKind + '-' + resHand`.
-    variants: {
-      axes: [
-        { id:'kind', label:'Rainhead', options:[ {v:'dbr', t:'Dam Buster'}, {v:'or', t:'Open'} ] },
-        { id:'hand', label:'Hand',     options:[ {v:'L', t:'Left'}, {v:'R', t:'Right'} ] },
-      ],
-      // build a variant key from the two axis values, matching the PDF
-      key: sel => sel.kind + '-' + sel.hand,
-    },
-    hint: 'Corner Side Outlet. Pick Rainhead kind (DBR/OR) and Hand (L/R) — each of the 4 combinations stores its own placements and exports its own block. Coordinates are % of the image (top-left = 0,0). Device code is the PDF page title.',
+    hint: 'Corner Side Outlet — all labels available; add the ones you need. Double-click a placed label to duplicate it. Coordinates are % of the image (top-left = 0,0). Device code is the PDF page title.',
     codeHeader: '// ── CSO diagram labels (from editor) — x,y are % of image. ' +
                 'Locals needed: flowTxt, jumpVal, totalVal, g1=r.gutters[0], g2=r.gutters[1] ──',
     labels: [
@@ -300,8 +276,9 @@ const DOMAINS = {
       // Shared
       { key:'Dd',    color:'red',  expr:"'Dd: ' + r.DD + ' mm'",              preview:'Dd: 120 mm' },
       { key:'Drop',  color:'red',  expr:"'Drop: ' + jumpVal + ' mm'",         preview:'Drop: 60 mm' },
-      { key:'Total', color:'red',  expr:"'Total depth: ' + totalVal + ' mm'", preview:'Total depth: 180 mm' },
+      { key:'Total', color:'red',  expr:"'DT: ' + totalVal + ' mm'",         preview:'DT: 180 mm' },
       { key:'DPsize',color:'blue', expr:"'DP: ' + r.dp_label",                preview:'DP: 100 DIAM' },
+      { key:'Note',  color:'red',  expr:"'Note'",                             preview:'Note' },
     ]
   }
 };
@@ -317,28 +294,15 @@ function rebuildLabelIndex() {
 }
 rebuildLabelIndex();
 
-// Is a label hidden in the current layout? Unifies SSO `two` and OR `modes`.
-function labelHidden(l) {
-  if (DOMAINS[domain].coord === 'mm') return l.two && layout !== 2;   // SSO
-  return l.modes && l.modes.indexOf(layout) === -1;                   // OR
-}
+// No modes/variants: every label is always available.
+function labelHidden(l) { return false; }
 
 // placed[key] = { x, y, fs, angle }   (x,y in PDF mm or %; fs in pt; angle deg CW)
-// For domains with variants (CSO), keys are namespaced 'variantKey::labelKey'
-// so each variant keeps its own placements. pk() builds that namespaced key.
 let placed = {};
 let selKey = null;
-let layout = 1;
-let variantSel = {};          // e.g. { kind:'dbr', hand:'L' } for CSO; {} otherwise
 
-function currentVariantKey() {
-  const v = DOMAINS[domain].variants;
-  return v ? v.key(variantSel) : '';
-}
-function pk(labelKey) {
-  const vk = currentVariantKey();
-  return vk ? (vk + '::' + labelKey) : labelKey;
-}
+// Kept as an identity pass-through so existing placed[pk(key)] call sites work.
+function pk(labelKey) { return labelKey; }
 
 const img = document.getElementById('diagram');
 const imgbox = document.getElementById('imgbox');
@@ -367,8 +331,8 @@ function flushDomain() {
   s.custom = [];
   s.renames = {};
   DOMAINS[domain].labels.forEach(l => {
-    if (l.custom) {
-      s.custom.push({ key:l.key, name:l.name, color:l.color, expr:l.expr, preview:l.preview });
+    if (l.custom || l.dup) {
+      s.custom.push({ key:l.key, name:l.name, color:l.color, expr:l.expr, preview:l.preview, dup: !!l.dup });
     } else if (l._origExpr != null || (l.name != null && l.name !== l.key)) {
       s.renames[l.key] = { name:l.name, expr:l.expr, preview:l.preview, color:l.color,
                            _origExpr:l._origExpr, _origPrefix:l._origPrefix, _previewSuffix:l._previewSuffix };
@@ -379,7 +343,7 @@ function flushDomain() {
 // Rebuild the active domain from its stored state (inverse of flushDomain).
 function loadDomainState() {
   const s = ensureStore(domain);
-  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom);
+  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom && !l.dup);
   DOMAINS[domain].labels.forEach(l => {
     const rn = s.renames[l.key];
     if (rn) { l.name=rn.name; l.expr=rn.expr; l.preview=rn.preview; if(rn.color) l.color=rn.color;
@@ -387,7 +351,8 @@ function loadDomainState() {
     else { delete l.name; }
   });
   s.custom.forEach(c => DOMAINS[domain].labels.push(
-    { key:c.key, name:c.name, color:c.color, custom:true, expr:c.expr, preview:c.preview }));
+    c.dup ? { key:c.key, name:c.name, color:c.color, dup:true, expr:c.expr, preview:c.preview }
+          : { key:c.key, name:c.name, color:c.color, custom:true, expr:c.expr, preview:c.preview }));
   rebuildLabelIndex();
   placed = s.placed || {};
 }
@@ -397,7 +362,7 @@ function setDomain(dom) {
   flushDomain();                                    // preserve current domain's work
   domain = dom;
   loadDomainState();                                // restore target domain's work
-  selKey = null; layout = 1;
+  selKey = null;
 
   // Highlight the active domain button.
   ['SSO','OR','R','SU','ESO','TSO','CSO'].forEach(d => {
@@ -405,70 +370,8 @@ function setDomain(dom) {
     if (btn) btn.classList.toggle('sel', d === dom);
   });
 
-  const cfg = DOMAINS[domain];
-  // Initialise variant selection to the first option of each axis.
-  variantSel = {};
-  if (cfg.variants) cfg.variants.axes.forEach(ax => { variantSel[ax.id] = ax.options[0].v; });
-  buildVariantUI();
-
-  // Layout toggle: hidden for single-mode and variant domains (variants replace it).
-  document.getElementById('layoutRow').style.display = (cfg.single || cfg.variants) ? 'none' : '';
-  if (!cfg.single && !cfg.variants) {
-    document.getElementById('lay1').textContent = cfg.lay1;
-    document.getElementById('lay2').textContent = cfg.lay2;
-    document.getElementById('layoutLabel').textContent = cfg.layoutLabel;
-  }
-  document.getElementById('layoutHint').textContent = cfg.hint;
-
-  setLayout(1);          // layout=1 is harmless even when the toggle is hidden
-  renderSelPanel();
-}
-
-// Build the per-axis variant toggle rows (CSO). Cleared for non-variant domains.
-function buildVariantUI() {
-  const host = document.getElementById('variantRow');
-  if (!host) return;
-  host.innerHTML = '';
-  const cfg = DOMAINS[domain];
-  if (!cfg.variants) { host.style.display = 'none'; return; }
-  host.style.display = '';
-  cfg.variants.axes.forEach(ax => {
-    const ctl = document.createElement('div');
-    ctl.className = 'ctl';
-    const lab = document.createElement('label');
-    lab.textContent = ax.label;
-    ctl.appendChild(lab);
-    const row = document.createElement('div');
-    row.className = 'row';
-    ax.options.forEach(o => {
-      const b = document.createElement('button');
-      b.className = 'alt' + (variantSel[ax.id] === o.v ? ' sel' : '');
-      b.textContent = o.t;
-      b.onclick = () => setVariant(ax.id, o.v);
-      b.dataset.axis = ax.id; b.dataset.val = o.v;
-      row.appendChild(b);
-    });
-    ctl.appendChild(row);
-    host.appendChild(ctl);
-  });
-}
-
-// Switch one axis value; placements are namespaced so the others are untouched.
-function setVariant(axisId, val) {
-  variantSel[axisId] = val;
-  selKey = null;
-  // Refresh button highlights.
-  document.querySelectorAll('#variantRow button').forEach(b => {
-    b.classList.toggle('sel', variantSel[b.dataset.axis] === b.dataset.val);
-  });
+  document.getElementById('layoutHint').textContent = DOMAINS[domain].hint;
   renderPalette(); renderAll(); renderSelPanel();
-}
-
-function setLayout(n) {
-  layout = n;
-  document.getElementById('lay1').classList.toggle('sel', n === 1);
-  document.getElementById('lay2').classList.toggle('sel', n === 2);
-  renderPalette(); renderAll();
 }
 
 function pxPerMm() {
@@ -533,6 +436,30 @@ function addCustomLabel() {
   addLabel(key);
 }
 
+// Clone a label definition (built-in, custom, or another dup) into a new
+// independent instance that exports identically to its parent — used for the
+// "needed twice" case (e.g. a second Dd). Flagged dup:true so save/load keeps it.
+function duplicateLabelDef(src) {
+  const key = 'dup_' + (++customSeq);
+  const lab = { key: key, color: src.color, dup: true, name: labelName(src),
+                preview: src.preview, expr: src.expr };
+  DOMAINS[domain].labels.push(lab);
+  rebuildLabelIndex();
+  return lab;
+}
+
+// Double-click a placed label to duplicate it at a small offset.
+function duplicatePlaced(srcKey) {
+  const src = LABEL_BY_KEY[srcKey];
+  const sd = placed[srcKey];
+  if (!src || !sd) return;
+  const lab = duplicateLabelDef(src);
+  const off = (DOMAINS[domain].coord === 'mm') ? 6 : 4;   // mm vs % nudge
+  placed[lab.key] = { x: +(sd.x + off).toFixed(2), y: +(sd.y + off).toFixed(2), fs: sd.fs, angle: sd.angle };
+  select(lab.key);
+  renderAll();
+}
+
 function addLabel(key) {
   const center = (DOMAINS[domain].coord === 'mm')
     ? { x: IMG_X + IMG_W / 2, y: IMG_Y + IMG_H / 2 }   // SSO: middle of image in mm
@@ -571,7 +498,9 @@ function renderAll() {
     }
     el.innerHTML = '<span class="txt" style="font-size:' + fontPx + 'px; transform:rotate(' + d.angle + 'deg);">' +
                    lab.preview + '</span><span class="anchor"></span>';
-    el.querySelector('.txt').addEventListener('mousedown', startDrag.bind(null, key));
+    const txt = el.querySelector('.txt');
+    txt.addEventListener('mousedown', startDrag.bind(null, key));
+    txt.addEventListener('dblclick', function(ev){ ev.preventDefault(); duplicatePlaced(key); });
     imgbox.appendChild(el);
   });
 }
@@ -657,10 +586,10 @@ function nudgeColor(){ const l = LABEL_BY_KEY[selKey]; l.color = (l.color === 'r
 function deleteSel() {
   const l = LABEL_BY_KEY[selKey];
   delete placed[pk(selKey)];
-  if (l && l.custom) {
+  if (l && (l.custom || l.dup)) {
     const arr = DOMAINS[domain].labels;
     const i = arr.indexOf(l);
-    if (i !== -1) arr.splice(i, 1);   // custom labels vanish from the palette too
+    if (i !== -1) arr.splice(i, 1);   // custom/dup labels vanish from the palette too
     rebuildLabelIndex();
   }
   selKey = null;
@@ -670,20 +599,18 @@ function deleteSel() {
 function resetAll() {
   if (!confirm('Clear all placed labels in this mode?')) return;
   placed = {}; selKey = null;
-  // also clear this domain's stored custom labels / renames
+  // also clear this domain's stored custom/dup labels / renames
   store[domain] = { placed: {}, custom: [], renames: {} };
-  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom);
+  DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom && !l.dup);
   DOMAINS[domain].labels.forEach(l => { delete l.name; delete l._origExpr; delete l._origPrefix; delete l._previewSuffix; });
   rebuildLabelIndex();
   renderPalette(); renderAll(); renderSelPanel();
 }
 
-function emitLabelLines(prefix) {
-  // prefix = variant namespace ('' for non-variant domains)
+function emitLabelLines() {
   const lines = [];
   LABELS.forEach(l => {
-    if (labelHidden(l)) return;
-    const d = placed[prefix ? (prefix + '::' + l.key) : l.key];
+    const d = placed[l.key];
     if (!d) return;
     const fn = l.color === 'red' ? 'labelRed' : 'labelBlue';
     lines.push(labelName(l).padEnd(11) + ' -> ' + fn + '(' + l.expr + ', ' + d.x + ', ' + d.y + ', ' + d.fs + ', ' + d.angle + ');');
@@ -693,22 +620,7 @@ function emitLabelLines(prefix) {
 
 function genCode() {
   const out = [DOMAINS[domain].codeHeader];
-  const v = DOMAINS[domain].variants;
-  if (!v) {
-    out.push(...emitLabelLines(''));
-  } else {
-    // One block per variant combination, labelled by its variant key.
-    const combos = [];
-    (function build(i, sel) {
-      if (i === v.axes.length) { combos.push(v.key(sel)); return; }
-      v.axes[i].options.forEach(o => { const s = Object.assign({}, sel); s[v.axes[i].id] = o.v; build(i + 1, s); });
-    })(0, {});
-    combos.forEach(vk => {
-      out.push('', "// ---- variant '" + vk + "' ----");
-      const lines = emitLabelLines(vk);
-      out.push(...(lines.length ? lines : ['// (nothing placed for this variant yet)']));
-    });
-  }
+  out.push(...emitLabelLines());
   document.getElementById('output').value = out.join('\n');
 }
 function copyOut() { const t = document.getElementById('output'); t.select(); document.execCommand('copy'); }
@@ -757,17 +669,12 @@ function importCode() {
   const text = document.getElementById('output').value;
   if (!text.trim()) { alert('Paste previously generated code into the box first.'); return; }
   const lines = text.split('\n');
-  const v = DOMAINS[domain].variants;
-  let curVariant = '';                            // '' = non-variant / default
   let applied = 0, skipped = 0;
 
   lines.forEach(raw => {
     const line = raw.trim();
     if (!line) return;
-    // variant header?
-    const vh = line.match(/^\/\/\s*-+\s*variant\s+'([^']+)'/i);
-    if (vh) { curVariant = v ? vh[1] : ''; return; }
-    if (line.startsWith('//')) return;            // other comments
+    if (line.startsWith('//')) return;            // comments incl. old variant headers
     // "<name> -> labelRed/Blue( <expr...> , x, y, fs, angle );"
     const m = line.match(/^(.+?)\s*->\s*label(?:Red|Blue)\((.*)\)\s*;?\s*$/);
     if (!m) return;
@@ -778,10 +685,12 @@ function importCode() {
     if (!nums) { skipped++; return; }
     const x = parseFloat(nums[1]), y = parseFloat(nums[2]), fs = parseFloat(nums[3]), angle = parseFloat(nums[4]);
     // find the matching label in the current mode by display name
-    const lab = LABELS.find(l => labelName(l) === name);
+    let lab = LABELS.find(l => labelName(l) === name);
     if (!lab) { skipped++; return; }
-    const keyName = curVariant ? (curVariant + '::' + lab.key) : lab.key;
-    placed[keyName] = { x: x, y: y, fs: fs, angle: angle };
+    // If that label is already placed (e.g. a second Dd), spawn a duplicate.
+    let key = lab.key;
+    if (placed[key]) { lab = duplicateLabelDef(lab); key = lab.key; }
+    placed[key] = { x: x, y: y, fs: fs, angle: angle };
     applied++;
   });
 
@@ -793,7 +702,6 @@ function importCode() {
 }
 
 window.addEventListener('resize', renderAll);
-setLayout(1);
 renderPalette(); renderSelPanel();
 </script>
 </body>
