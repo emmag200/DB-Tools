@@ -86,7 +86,7 @@
 
     <h2>Diagram</h2>
     <div class="filein"><input type="file" id="fileInput" accept="image/*"></div>
-    <div class="hint" id="layoutHint" style="margin-top:8px;">Click a label below to add it; drag it to position. Double-click a placed label to duplicate it.</div>
+    <div class="hint" id="layoutHint" style="margin-top:8px;">Click a label below to add it; drag it to position. Select a label and click Duplicate to copy it.</div>
 
     <h2>Add label</h2>
     <div class="palette" id="palette"></div>
@@ -131,7 +131,7 @@ const DEFAULT_FS = 12;
 const DOMAINS = {
   SSO: {
     coord: 'mm',
-    hint: 'Click a label below to add it; drag it to position. Double-click a placed label to duplicate it.',
+    hint: 'Click a label below to add it; drag it to position. Select a label and click Duplicate to copy it.',
     codeHeader: '// ── SSO page-2 diagram labels (from editor) ──',
     labels: [
       { key:'D1U',        color:'red',  expr:"'D1U: ' + data.D1U",                preview:'D1U: 115 mm' },
@@ -160,7 +160,7 @@ const DOMAINS = {
   },
   OR: {
     coord: 'pct',
-    hint: 'Click a label below to add it; drag it to position. Double-click a placed label to duplicate it. Coordinates are % of the image (top-left = 0,0).',
+    hint: 'Click a label below to add it; drag it to position. Select a label and click Duplicate to copy it. Coordinates are % of the image (top-left = 0,0).',
     codeHeader: '// ── OR diagram labels (from editor) — x,y are % of image ──',
     // expr fields reference the OR calculate-result object `r` (see OR-JavaS.JS wizRenderResults)
     labels: [
@@ -256,7 +256,7 @@ const DOMAINS = {
   },
   CSO: {
     coord: 'pct',
-    hint: 'Corner Side Outlet — all labels available; add the ones you need. Double-click a placed label to duplicate it. Coordinates are % of the image (top-left = 0,0). Device code is the PDF page title.',
+    hint: 'Corner Side Outlet — all labels available; add the ones you need. Select a label and click Duplicate to copy it. Coordinates are % of the image (top-left = 0,0). Device code is the PDF page title.',
     codeHeader: '// ── CSO diagram labels (from editor) — x,y are % of image. ' +
                 'Locals needed: flowTxt, jumpVal, totalVal, g1=r.gutters[0], g2=r.gutters[1] ──',
     labels: [
@@ -449,13 +449,14 @@ function duplicateLabelDef(src) {
 }
 
 // Double-click a placed label to duplicate it at a small offset.
-function duplicatePlaced(srcKey) {
-  const src = LABEL_BY_KEY[srcKey];
-  const sd = placed[srcKey];
+function duplicateSel() {
+  if (!selKey) return;
+  const src = LABEL_BY_KEY[selKey];
+  const sd = placed[pk(selKey)];
   if (!src || !sd) return;
   const lab = duplicateLabelDef(src);
   const off = (DOMAINS[domain].coord === 'mm') ? 6 : 4;   // mm vs % nudge
-  placed[lab.key] = { x: +(sd.x + off).toFixed(2), y: +(sd.y + off).toFixed(2), fs: sd.fs, angle: sd.angle };
+  placed[pk(lab.key)] = { x: +(sd.x + off).toFixed(2), y: +(sd.y + off).toFixed(2), fs: sd.fs, angle: sd.angle };
   select(lab.key);
   renderAll();
 }
@@ -500,7 +501,6 @@ function renderAll() {
                    lab.preview + '</span><span class="anchor"></span>';
     const txt = el.querySelector('.txt');
     txt.addEventListener('mousedown', startDrag.bind(null, key));
-    txt.addEventListener('dblclick', function(ev){ ev.preventDefault(); duplicatePlaced(key); });
     imgbox.appendChild(el);
   });
 }
@@ -546,6 +546,8 @@ function renderSelPanel() {
     '<div class="ctl"><label>Rotation (°, clockwise)</label><div class="line">' +
       '<input type="range" min="-180" max="180" step="1" value="' + d.angle + '" oninput="setAngle(this.value)">' +
       '<input type="number" min="-180" max="180" step="1" value="' + d.angle + '" oninput="setAngle(this.value)"></div></div>' +
+    '<div class="row" style="margin-bottom:6px;">' +
+      '<button class="alt" onclick="duplicateSel()">Duplicate</button></div>' +
     '<div class="row">' +
       '<button class="alt" onclick="nudgeColor()">Toggle colour</button>' +
       '<button onclick="deleteSel()">Delete</button></div>';
