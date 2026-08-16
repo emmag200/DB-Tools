@@ -26,6 +26,7 @@
   }
   .lab.red  .txt { color: #c0392b; }
   .lab.blue .txt { color: #2049a0; }
+  .lab.custom .txt { color: #16a34a; }
   .lab.sel  .txt { outline: 1.5px dashed #38bdf8; outline-offset: 1px; }
   .lab .anchor { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8; opacity: 0; }
   .lab.sel .anchor { opacity: 1; }
@@ -73,7 +74,7 @@
     <h2>Calculator</h2>
     <div class="ctl">
       <div class="row" style="flex-wrap:wrap;">
-        <style>#domSSO,#domOR,#domR,#domSU,#domESO,#domTSO,#domCSO{flex:1 1 auto; min-width:88px;}</style>
+        <style>#domSSO,#domOR,#domR,#domSU,#domESO,#domTSO,#domCSO,#domUD{flex:1 1 auto; min-width:88px;}</style>
         <button id="domSSO" class="sel" onclick="setDomain('SSO')">SSO</button>
         <button id="domOR" class="alt" onclick="setDomain('OR')">Open Rainhead</button>
         <button id="domR" class="alt" onclick="setDomain('R')">Rainhead</button>
@@ -81,6 +82,7 @@
         <button id="domESO" class="alt" onclick="setDomain('ESO')">End Side Outlet</button>
         <button id="domTSO" class="alt" onclick="setDomain('TSO')">T Side Outlet</button>
         <button id="domCSO" class="alt" onclick="setDomain('CSO')">Corner Side Outlet</button>
+        <button id="domUD" class="alt" onclick="setDomain('UD')">Upstream Devices</button>
       </div>
     </div>
 
@@ -107,7 +109,7 @@
       <button onclick="resetAll()" class="alt">Reset all</button>
       <button onclick="genCode()">Generate code</button>
     </div>
-    <textarea id="output" placeholder="Generate code to get the labelRed / labelBlue lines — or paste previously generated code here and click Import."></textarea>
+    <textarea id="output" placeholder="Generate code to get the labelRed / labelBlue / labelRGB lines - or paste previously generated code here and click Import."></textarea>
     <div class="row" style="margin-top:6px;">
       <button onclick="copyOut()">Copy code</button>
       <button onclick="importCode()" class="alt">Import pasted code</button>
@@ -119,7 +121,7 @@
 // Image is drawn in the PDF at x=10, y=10, width=190, height=150 (mm).
 const IMG_X = 10, IMG_Y = 10, IMG_W = 190, IMG_H = 150;
 const PT_TO_MM = 0.3528;
-const DEFAULT_FS = 12;
+const DEFAULT_FS = 10;
 
 // ── Label sets per calculator domain ────────────────────────────────────────
 // Each label: key, color, code expr, preview text. All labels in a mode are
@@ -280,8 +282,55 @@ const DOMAINS = {
       { key:'DPsize',color:'blue', expr:"'DP: ' + r.dp_label",                preview:'DP: 100 DIAM' },
       { key:'Note',  color:'red',  expr:"'Note'",                             preview:'Note' },
     ]
+  },
+  UD: {
+    coord: 'pct',
+    hint: 'Upstream Devices (Elbow / Corner / T) — gutters are named A, B, C. ' +
+          'Add the labels the diagram needs; coordinates are % of the image (top-left = 0,0). ' +
+          'A = first upstream, B = second upstream (or the outflow on an Elbow), C = outflow. Device code is the PDF page title.',
+    codeHeader: '// ── Upstream Devices diagram labels (from editor) — x,y are % of image. ' +
+                'Needs locals: gA/gB/gC gutters (gA=r.upstream[0], gB=r.upstream[1] or r.outflow on Elbow, gC=r.outflow), dropVal, totalVal ──',
+    // Gutter objects carry flow/length/slope/width/DU/DD (same shape as the side outlets).
+    labels: [
+      // Gutter A
+      { key:'QA',   color:'blue', expr:"'QA: ' + gA.flow + ' L/s'",     preview:'QA: 3.0 L/s' },
+      { key:'LA',   color:'blue', expr:"'LA: ' + gA.length + ' mm'",    preview:'LA: 15000 mm' },
+      { key:'SA',   color:'blue', expr:"'SA: 1 in ' + gA.slope",        preview:'SA: 1 in 100' },
+      { key:'WbgA', color:'blue', expr:"'WbgA: ' + gA.width + ' mm'",   preview:'WbgA: 400 mm' },
+      { key:'DuA',  color:'red',  expr:"'DuA: ' + gA.DU + ' mm'",       preview:'DuA: 80 mm' },
+      { key:'DdA',  color:'red',  expr:"'DdA: ' + gA.DD + ' mm'",       preview:'DdA: 120 mm' },
+      // Gutter B
+      { key:'QB',   color:'blue', expr:"'QB: ' + gB.flow + ' L/s'",     preview:'QB: 2.5 L/s' },
+      { key:'LB',   color:'blue', expr:"'LB: ' + gB.length + ' mm'",    preview:'LB: 12000 mm' },
+      { key:'SB',   color:'blue', expr:"'SB: 1 in ' + gB.slope",        preview:'SB: 1 in 100' },
+      { key:'WbgB', color:'blue', expr:"'WbgB: ' + gB.width + ' mm'",   preview:'WbgB: 400 mm' },
+      { key:'DuB',  color:'red',  expr:"'DuB: ' + gB.DU + ' mm'",       preview:'DuB: 90 mm' },
+      { key:'DdB',  color:'red',  expr:"'DdB: ' + gB.DD + ' mm'",       preview:'DdB: 120 mm' },
+      // Gutter C (outflow)
+      { key:'QC',   color:'blue', expr:"'QC: ' + gC.flow + ' L/s'",     preview:'QC: 5.5 L/s' },
+      { key:'LC',   color:'blue', expr:"'LC: ' + gC.length + ' mm'",    preview:'LC: 12000 mm' },
+      { key:'SC',   color:'blue', expr:"'SC: 1 in ' + gC.slope",        preview:'SC: 1 in 100' },
+      { key:'WbgC', color:'blue', expr:"'WbgC: ' + gC.width + ' mm'",   preview:'WbgC: 400 mm' },
+      { key:'DuC',  color:'red',  expr:"'DuC: ' + gC.DU + ' mm'",       preview:'DuC: 110 mm' },
+      { key:'DdC',  color:'red',  expr:"'DdC: ' + gC.DD + ' mm'",       preview:'DdC: 150 mm' },
+      // Shared
+      { key:'Hand',   color:'blue', expr:"'Hand: ' + r.hand",           preview:'Hand: R' },
+      { key:'Drop',   color:'red',  expr:"'Drop: ' + dropVal + ' mm'",  preview:'Drop: 60 mm' },
+      { key:'Total',  color:'red',  expr:"'DT: ' + totalVal + ' mm'",   preview:'DT: 180 mm' },
+      { key:'Device', color:'red',  expr:"'Device: ' + r.device_code",  preview:'Device: CJN-400-R' },
+      { key:'Note',   color:'red',  expr:"'Note'",                      preview:'Note' },
+    ]
   }
 };
+
+// Pristine default colour per built-in label, captured before any edits so a
+// colour change can be detected (for save) and reverted (on reset / mode switch).
+const DEFAULT_COLOR = {};
+Object.keys(DOMAINS).forEach(dom => {
+  DEFAULT_COLOR[dom] = {};
+  DOMAINS[dom].labels.forEach(l => { DEFAULT_COLOR[dom][l.key] = l.color; });
+});
+function defColor(key) { return (DEFAULT_COLOR[domain] || {})[key]; }
 
 // Active domain + its derived label list / lookup. Rebuilt by setDomain().
 let domain = 'SSO';
@@ -333,7 +382,7 @@ function flushDomain() {
   DOMAINS[domain].labels.forEach(l => {
     if (l.custom || l.dup) {
       s.custom.push({ key:l.key, name:l.name, color:l.color, expr:l.expr, preview:l.preview, dup: !!l.dup });
-    } else if (l._origExpr != null || (l.name != null && l.name !== l.key)) {
+    } else if (l._origExpr != null || (l.name != null && l.name !== l.key) || l.color !== defColor(l.key)) {
       s.renames[l.key] = { name:l.name, expr:l.expr, preview:l.preview, color:l.color,
                            _origExpr:l._origExpr, _origPrefix:l._origPrefix, _previewSuffix:l._previewSuffix };
     }
@@ -348,7 +397,7 @@ function loadDomainState() {
     const rn = s.renames[l.key];
     if (rn) { l.name=rn.name; l.expr=rn.expr; l.preview=rn.preview; if(rn.color) l.color=rn.color;
               l._origExpr=rn._origExpr; l._origPrefix=rn._origPrefix; l._previewSuffix=rn._previewSuffix; }
-    else { delete l.name; }
+    else { delete l.name; l.color = defColor(l.key); }
   });
   s.custom.forEach(c => DOMAINS[domain].labels.push(
     c.dup ? { key:c.key, name:c.name, color:c.color, dup:true, expr:c.expr, preview:c.preview }
@@ -365,7 +414,7 @@ function setDomain(dom) {
   selKey = null;
 
   // Highlight the active domain button.
-  ['SSO','OR','R','SU','ESO','TSO','CSO'].forEach(d => {
+  ['SSO','OR','R','SU','ESO','TSO','CSO','UD'].forEach(d => {
     const btn = document.getElementById('dom' + d);
     if (btn) btn.classList.toggle('sel', d === dom);
   });
@@ -485,7 +534,8 @@ function renderAll() {
     const key = lab.key;
     const s = toScreen(d.x, d.y);
     const el = document.createElement('div');
-    el.className = 'lab ' + lab.color + (key === selKey ? ' sel' : '');
+    const named = (lab.color === 'red' || lab.color === 'blue');
+    el.className = 'lab ' + (named ? lab.color : 'custom') + (key === selKey ? ' sel' : '');
     el.style.left = s.sx + 'px';
     el.style.top  = s.sy + 'px';
     // Font preview: SSO matches PDF point size via mm scale; OR scales pt against
@@ -497,7 +547,8 @@ function renderAll() {
       const r = img.getBoundingClientRect();
       fontPx = d.fs * PT_TO_MM * (r.width / 210);
     }
-    el.innerHTML = '<span class="txt" style="font-size:' + fontPx + 'px; transform:rotate(' + d.angle + 'deg);">' +
+    const colStyle = named ? '' : ('color:' + lab.color + ';');
+    el.innerHTML = '<span class="txt" style="font-size:' + fontPx + 'px; ' + colStyle + 'transform:rotate(' + d.angle + 'deg);">' +
                    lab.preview + '</span><span class="anchor"></span>';
     const txt = el.querySelector('.txt');
     txt.addEventListener('mousedown', startDrag.bind(null, key));
@@ -546,10 +597,16 @@ function renderSelPanel() {
     '<div class="ctl"><label>Rotation (°, clockwise)</label><div class="line">' +
       '<input type="range" min="-180" max="180" step="1" value="' + d.angle + '" oninput="setAngle(this.value)">' +
       '<input type="number" min="-180" max="180" step="1" value="' + d.angle + '" oninput="setAngle(this.value)"></div></div>' +
+    '<div class="ctl"><label>Colour</label><div class="line">' +
+      '<button class="alt' + (lab.color === 'red'  ? ' sel' : '') + '" style="flex:1; background:#c0392b;" onclick="setColor(\'red\')">Red</button>' +
+      '<button class="alt' + (lab.color === 'blue' ? ' sel' : '') + '" style="flex:1; background:#2049a0;" onclick="setColor(\'blue\')">Blue</button>' +
+      '<input type="color" title="Custom colour" style="width:38px; height:34px; padding:2px; background:#0b1220; border:1px solid #334155; border-radius:4px; cursor:pointer;" value="' + colorHex(lab.color) + '" oninput="setColor(this.value)">' +
+      '</div>' +
+      '<div class="hint" style="margin:4px 0 0;">Red and Blue export as labelRed / labelBlue. A custom colour exports as labelRGB.</div>' +
+    '</div>' +
     '<div class="row" style="margin-bottom:6px;">' +
       '<button class="alt" onclick="duplicateSel()">Duplicate</button></div>' +
     '<div class="row">' +
-      '<button class="alt" onclick="nudgeColor()">Toggle colour</button>' +
       '<button onclick="deleteSel()">Delete</button></div>';
 }
 function setName(v) {
@@ -584,7 +641,23 @@ function setName(v) {
 }
 function setFs(v)    { placed[pk(selKey)].fs = parseFloat(v); renderAll(); renderSelPanel(); }
 function setAngle(v) { placed[pk(selKey)].angle = parseFloat(v); renderAll(); renderSelPanel(); }
-function nudgeColor(){ const l = LABEL_BY_KEY[selKey]; l.color = (l.color === 'red' ? 'blue' : 'red'); renderAll(); renderSelPanel(); }
+function setColor(c){ const l = LABEL_BY_KEY[selKey]; if (!l) return; l.color = c; renderAll(); renderSelPanel(); }
+
+// Colour helpers. 'red'/'blue' are the two named PDF colours; anything else is a
+// hex string that exports as labelRGB.
+function colorHex(c) {
+  if (c === 'red')  return '#c0392b';
+  if (c === 'blue') return '#2049a0';
+  return /^#[0-9a-fA-F]{6}$/.test(c) ? c : '#16a34a';
+}
+function hexToRgb(hex) {
+  const h = colorHex(hex).replace('#', '');
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
+function rgbToHex(r,g,b) {
+  const t = n => ('0' + Math.max(0, Math.min(255, n)).toString(16)).slice(-2);
+  return '#' + t(r) + t(g) + t(b);
+}
 function deleteSel() {
   const l = LABEL_BY_KEY[selKey];
   delete placed[pk(selKey)];
@@ -604,7 +677,7 @@ function resetAll() {
   // also clear this domain's stored custom/dup labels / renames
   store[domain] = { placed: {}, custom: [], renames: {} };
   DOMAINS[domain].labels = DOMAINS[domain].labels.filter(l => !l.custom && !l.dup);
-  DOMAINS[domain].labels.forEach(l => { delete l.name; delete l._origExpr; delete l._origPrefix; delete l._previewSuffix; });
+  DOMAINS[domain].labels.forEach(l => { delete l.name; delete l._origExpr; delete l._origPrefix; delete l._previewSuffix; l.color = defColor(l.key); });
   rebuildLabelIndex();
   renderPalette(); renderAll(); renderSelPanel();
 }
@@ -614,8 +687,17 @@ function emitLabelLines() {
   LABELS.forEach(l => {
     const d = placed[l.key];
     if (!d) return;
-    const fn = l.color === 'red' ? 'labelRed' : 'labelBlue';
-    lines.push(labelName(l).padEnd(11) + ' -> ' + fn + '(' + l.expr + ', ' + d.x + ', ' + d.y + ', ' + d.fs + ', ' + d.angle + ');');
+    let call;
+    const tail = d.x + ', ' + d.y + ', ' + d.fs + ', ' + d.angle;
+    if (l.color === 'red') {
+      call = 'labelRed(' + l.expr + ', ' + tail + ');';
+    } else if (l.color === 'blue') {
+      call = 'labelBlue(' + l.expr + ', ' + tail + ');';
+    } else {
+      const rgb = hexToRgb(l.color);
+      call = 'labelRGB(' + l.expr + ', ' + tail + ', ' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ');';
+    }
+    lines.push(labelName(l).padEnd(11) + ' -> ' + call);
   });
   return lines;
 }
@@ -677,21 +759,34 @@ function importCode() {
     const line = raw.trim();
     if (!line) return;
     if (line.startsWith('//')) return;            // comments incl. old variant headers
-    // "<name> -> labelRed/Blue( <expr...> , x, y, fs, angle );"
-    const m = line.match(/^(.+?)\s*->\s*label(?:Red|Blue)\((.*)\)\s*;?\s*$/);
+    // "<name> -> labelRed/Blue( <expr...>, x, y, fs, angle );"  or
+    // "<name> -> labelRGB( <expr...>, x, y, fs, angle, r, g, b );"
+    const m = line.match(/^(.+?)\s*->\s*label(Red|Blue|RGB)\((.*)\)\s*;?\s*$/);
     if (!m) return;
     const name = m[1].trim();
-    const args = m[2];
-    // pull the trailing 4 numbers (x, y, fs, angle)
-    const nums = args.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
-    if (!nums) { skipped++; return; }
-    const x = parseFloat(nums[1]), y = parseFloat(nums[2]), fs = parseFloat(nums[3]), angle = parseFloat(nums[4]);
+    const kind = m[2];
+    const args = m[3];
+    let x, y, fs, angle, color;
+    if (kind === 'RGB') {
+      // trailing 7 numbers: x, y, fs, angle, r, g, b
+      const nums = args.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$/);
+      if (!nums) { skipped++; return; }
+      x = parseFloat(nums[1]); y = parseFloat(nums[2]); fs = parseFloat(nums[3]); angle = parseFloat(nums[4]);
+      color = rgbToHex(parseInt(nums[5],10), parseInt(nums[6],10), parseInt(nums[7],10));
+    } else {
+      // trailing 4 numbers: x, y, fs, angle
+      const nums = args.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+      if (!nums) { skipped++; return; }
+      x = parseFloat(nums[1]); y = parseFloat(nums[2]); fs = parseFloat(nums[3]); angle = parseFloat(nums[4]);
+      color = (kind === 'Red') ? 'red' : 'blue';
+    }
     // find the matching label in the current mode by display name
     let lab = LABELS.find(l => labelName(l) === name);
     if (!lab) { skipped++; return; }
     // If that label is already placed (e.g. a second Dd), spawn a duplicate.
     let key = lab.key;
     if (placed[key]) { lab = duplicateLabelDef(lab); key = lab.key; }
+    lab.color = color;                              // restore the imported colour
     placed[key] = { x: x, y: y, fs: fs, angle: angle };
     applied++;
   });
